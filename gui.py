@@ -6,54 +6,6 @@ import pandas as pd
 conn = sqlite3.connect('zawody.db')
 c = conn.cursor()
 
-c.execute('''
-    CREATE TABLE Osoba (
-    id integer NOT NULL CONSTRAINT Osoba_pk PRIMARY KEY,
-    imie varchar(20) NOT NULL,
-    drugieImie varchar(20),
-    nazwisko varchar(20) NOT NULL,
-    dataUr date NOT NULL,
-    nrTelefonu varchar(20) NOT NULL,
-    daneOpiekuna varchar(40)
-);
-''')
-
-c.execute('''
-CREATE TABLE Zawody (
-    id integer NOT NULL CONSTRAINT Zawody_pk PRIMARY KEY,
-    nazwa varchar(20) NOT NULL,
-    typ varchar(20) NOT NULL,
-    data date NOT NULL
-);
-''')
-
-c.execute('''
-CREATE TABLE Zawodnik (
-    id integer NOT NULL CONSTRAINT Zawodnik_pk PRIMARY KEY,
-    pojazd varchar(20) NOT NULL,
-    Osoba_id integer NOT NULL,
-    Zawody_id integer NOT NULL,
-    CONSTRAINT Zawodnik_Osoba FOREIGN KEY (Osoba_id)
-    REFERENCES Osoba (id),
-    CONSTRAINT Zawodnik_Zawody FOREIGN KEY (Zawody_id)
-    REFERENCES Zawody (id)
-);
-''')
-
-c.execute('''
-CREATE TABLE Przejazd (
-    id integer NOT NULL CONSTRAINT Przejazd_pk PRIMARY KEY,
-    czas float NOT NULL,
-    zawodnikId integer NOT NULL,
-    notatka varchar(100) NOT NULL,
-    CONSTRAINT Przejazd_Zawodnik FOREIGN KEY (zawodnikId)
-    REFERENCES Zawodnik (id)
-);
-''')
-conn.commit()
-
-
-
 
 def register_competitors():
     def save_competitor():
@@ -61,17 +13,25 @@ def register_competitors():
         nazwisko = surname_entry.get()
         data_urodzenia = dob_entry.get()
         pojazd = vehicle.get()
+        nr_telefonu = phone_entry.get()
+        zawody_id = competition_entry.get()
 
-        #c.execute('INSERT INTO osoba (imie, nazwisko, data_urodzenia, pojazd) VALUES (?, ?, ?, ?)',
-        #          (imie, nazwisko, data_urodzenia, pojazd))
+
+        c.execute('INSERT INTO Osoba (imie, nazwisko, dataUr, nrTelefonu) VALUES (?, ?, ?, ?)',
+                  (imie, nazwisko, data_urodzenia, nr_telefonu))
+        osoba_id = c.lastrowid
+
+        c.execute('INSERT INTO Zawodnik (pojazd, Osoba_id, Zawody_id) VALUES (?, ?, ?)',
+                  (pojazd, osoba_id, zawody_id))
+
         conn.commit()
         messagebox.showinfo("Informacja", "Zawodnik zarejestrowany pomyślnie!")
         register_window.destroy()
 
+
     register_window = tk.Toplevel(window)
     register_window.geometry('400x500')
     register_window.title("Rejestracja zawodników")
-    #register_window.configure(bg='blue')
 
     name_label = tk.Label(register_window, text="Imię:")
     name_label.pack()
@@ -87,6 +47,16 @@ def register_competitors():
     dob_label.pack()
     dob_entry = tk.Entry(register_window)
     dob_entry.pack(padx=100, pady=10)
+
+    phone_label = tk.Label(register_window, text="Numer telefonu:")
+    phone_label.pack()
+    phone_entry = tk.Entry(register_window)
+    phone_entry.pack(padx=100, pady=10)
+
+    competition_label = tk.Label(register_window, text="ID Zawodów:")
+    competition_label.pack()
+    competition_entry = tk.Entry(register_window)
+    competition_entry.pack(padx=100, pady=10)
 
     vehicle = tk.StringVar()
     bike_radio = tk.Radiobutton(register_window, text="Rower", variable=vehicle, value="rower")
@@ -106,11 +76,18 @@ def modify_competitors():
         data_urodzenia = dob_entry.get()
         pojazd = vehicle_entry.get()
 
-        # c.execute('''
-        #     UPDATE zawodnicy
-        #     SET imie = ?, nazwisko = ?, data_urodzenia = ?, pojazd = ?
-        #     WHERE id = ?
-        # ''', (imie, nazwisko, data_urodzenia, pojazd, id_zawodnika))
+        c.execute('''
+            UPDATE Osoba
+            SET imie = ?, nazwisko = ?, dataUr = ?
+            WHERE id = (SELECT Osoba_id FROM Zawodnik WHERE id = ?)
+        ''', (imie, nazwisko, data_urodzenia, id_zawodnika))
+
+        c.execute('''
+            UPDATE Zawodnik
+            SET pojazd = ?
+            WHERE id = ?
+        ''', (pojazd, id_zawodnika))
+
         conn.commit()
         messagebox.showinfo("Informacja", "Dane zawodnika zaktualizowane pomyślnie!")
         modify_window.destroy()
@@ -166,7 +143,10 @@ def view_competitors():
     view_window.geometry('600x600')
     view_window.title("Zawodnicy")
 
-    original_df = pd.read_sql_query("SELECT * FROM Zawodnik", conn)
+    original_df = pd.read_sql_query(
+        "SELECT Zawodnik.id, Osoba.imie, Osoba.nazwisko, Osoba.dataUr, Zawodnik.pojazd FROM Zawodnik JOIN Osoba ON Zawodnik.Osoba_id = Osoba.id",
+        conn)
+
     df = original_df.copy()
 
     bike_button = tk.Button(view_window, text="Pokaż zawodników na rowerach", command=lambda: filter_by_vehicle('rower'))
