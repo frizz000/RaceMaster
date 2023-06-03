@@ -6,13 +6,45 @@ import pandas as pd
 conn = sqlite3.connect('zawody.db')
 c = conn.cursor()
 c.execute('''
-    CREATE TABLE IF NOT EXISTS zawodnicy (
-        id INTEGER PRIMARY KEY,
-        imie TEXT,
-        nazwisko TEXT,
-        data_urodzenia Date,
-        pojazd TEXT
-    )
+    CREATE TABLE Osoba (
+    id integer NOT NULL CONSTRAINT Osoba_pk PRIMARY KEY,
+    imie varchar(20) NOT NULL,
+    drugieImie varchar(20),
+    nazwisko varchar(20) NOT NULL,
+    dataUr date NOT NULL,
+    nrTelefonu varchar(20) NOT NULL,
+    daneOpiekuna varchar(40)
+);
+
+-- Table: Przejazd
+CREATE TABLE Przejazd (
+    id integer NOT NULL CONSTRAINT Przejazd_pk PRIMARY KEY,
+    czas float NOT NULL,
+    zawodnikId integer NOT NULL,
+    notatka varchar2(100) NOT NULL,
+    CONSTRAINT Przejazd_Zawodnik FOREIGN KEY (zawodnikId)
+    REFERENCES Zawodnik (id)
+);
+
+-- Table: Zawodnik
+CREATE TABLE Zawodnik (
+    id integer NOT NULL CONSTRAINT Zawodnik_pk PRIMARY KEY,
+    pojazd varchar(20) NOT NULL,
+    Osoba_id integer NOT NULL,
+    Zawody_id integer NOT NULL,
+    CONSTRAINT Zawodnik_Osoba FOREIGN KEY (Osoba_id)
+    REFERENCES Osoba (id),
+    CONSTRAINT Zawodnik_Zawody FOREIGN KEY (Zawody_id)
+    REFERENCES Zawody (id)
+);
+
+-- Table: Zawody
+CREATE TABLE Zawody (
+    id integer NOT NULL CONSTRAINT Zawody_pk PRIMARY KEY,
+    nazwa varchar2(20) NOT NULL,
+    typ varchar2(20) NOT NULL,
+    data date NOT NULL
+);
 ''')
 conn.commit()
 
@@ -24,8 +56,8 @@ def register_competitors():
         data_urodzenia = dob_entry.get()
         pojazd = vehicle.get()
 
-        c.execute('INSERT INTO zawodnicy (imie, nazwisko, data_urodzenia, pojazd) VALUES (?, ?, ?, ?)',
-                  (imie, nazwisko, data_urodzenia, pojazd))
+        #c.execute('INSERT INTO osoba (imie, nazwisko, data_urodzenia, pojazd) VALUES (?, ?, ?, ?)',
+        #          (imie, nazwisko, data_urodzenia, pojazd))
         conn.commit()
         messagebox.showinfo("Informacja", "Zawodnik zarejestrowany pomyślnie!")
         register_window.destroy()
@@ -68,11 +100,11 @@ def modify_competitors():
         data_urodzenia = dob_entry.get()
         pojazd = vehicle_entry.get()
 
-        c.execute('''
-            UPDATE zawodnicy
-            SET imie = ?, nazwisko = ?, data_urodzenia = ?, pojazd = ?
-            WHERE id = ?
-        ''', (imie, nazwisko, data_urodzenia, pojazd, id_zawodnika))
+        # c.execute('''
+        #     UPDATE zawodnicy
+        #     SET imie = ?, nazwisko = ?, data_urodzenia = ?, pojazd = ?
+        #     WHERE id = ?
+        # ''', (imie, nazwisko, data_urodzenia, pojazd, id_zawodnika))
         conn.commit()
         messagebox.showinfo("Informacja", "Dane zawodnika zaktualizowane pomyślnie!")
         modify_window.destroy()
@@ -128,7 +160,7 @@ def view_competitors():
     view_window.geometry('600x600')
     view_window.title("Zawodnicy")
 
-    original_df = pd.read_sql_query("SELECT * FROM zawodnicy", conn)
+    original_df = pd.read_sql_query("SELECT * FROM Zawodnik", conn)
     df = original_df.copy()
 
     bike_button = tk.Button(view_window, text="Pokaż zawodników na rowerach", command=lambda: filter_by_vehicle('rower'))
