@@ -35,5 +35,21 @@ CREATE TABLE Zawodnik (
     REFERENCES Kategoria (id)
 );
 
+
+INSERT INTO Kategoria (nazwa, rokUrodzeniaStart, rokUrodzeniaEnd) VALUES
+    ('Dorośli', 1988, 2002),
+    ('Młodzież', 2003, 2007),
+    ('Dzieci', 2008, 2023);
+
+INSERT INTO Zawodnik (imie, nazwisko, plec, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES
+    ('Jan', 'Kowalski', 'M', '1990-05-10', '123456789', 'Anna Kowalska', 'rower', 1),
+    ('Anna', 'Nowak', 'K', '2005-07-15', '987654321', 'Jan Nowak', 'hulajnoga', 2),
+    ('Adam', 'Wiśniewski', 'M', '2010-12-03', '456123789', 'Ewa Wiśniewska', 'rower', 3);
+
+INSERT INTO Przejazd (czasPrzejazdu, notatka, Zawodnik_id) VALUES
+    (15.6, 'Bardzo dobry czas!', 1),
+    (18.3, 'Poprawa w stosunku do ostatniego przejazdu.', 2),
+    (20.1, 'Pierwszy przejazd.', 3);
+
 -- End of file.
 
