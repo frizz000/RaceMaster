@@ -216,7 +216,6 @@ def clear_competitors():
 def get_categories():
     c.execute("SELECT nazwa FROM Kategoria")
     categories = c.fetchall()
-    print(categories)
     return [category[0] for category in categories]
 
 def filter_by_category(event=None):
@@ -269,7 +268,7 @@ def search_table():
 
 
 window = tk.Tk()
-window.geometry('1350x310')
+window.geometry('1350x290')
 window.resizable(False, False)
 window.title("System do mierzenia czasu na zawodach rowerowych")
 
@@ -277,7 +276,7 @@ button_frame = tk.Frame(window)
 button_frame.grid(row=0, column=0, sticky='ns')
 
 register_button = tk.Button(button_frame, text="Rejestracja zawodników", command=register_competitors)
-register_button.pack(padx=100, pady=10)
+register_button.pack(padx=100, pady=(20,10))
 
 modify_button = tk.Button(button_frame, text="Modyfikacja zawodników", command=modify_competitors)
 modify_button.pack(padx=100, pady=10)

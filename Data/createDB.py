@@ -1,6 +1,6 @@
 import sqlite3
 
-conn = sqlite3.connect('zawody.db')
+conn = sqlite3.connect('../zawody.db')
 c = conn.cursor()
 
 c.execute('''
