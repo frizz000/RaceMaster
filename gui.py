@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import sqlite3
 import pandas as pd
 
@@ -14,15 +14,11 @@ def register_competitors():
         data_urodzenia = dob_entry.get()
         pojazd = vehicle.get()
         nr_telefonu = phone_entry.get()
-        zawody_id = competition_entry.get()
+        dane_opiekuna = guardian_entry.get()
 
-
-        c.execute('INSERT INTO Osoba (imie, nazwisko, dataUr, nrTelefonu) VALUES (?, ?, ?, ?)',
-                  (imie, nazwisko, data_urodzenia, nr_telefonu))
-        osoba_id = c.lastrowid
-
-        c.execute('INSERT INTO Zawodnik (pojazd, Osoba_id, Zawody_id) VALUES (?, ?, ?)',
-                  (pojazd, osoba_id, zawody_id))
+        c.execute(
+            'INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd) VALUES (?, ?, ?, ?, ?, ?)',
+            (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd))
 
         conn.commit()
         messagebox.showinfo("Informacja", "Zawodnik zarejestrowany pomyślnie!")
@@ -53,10 +49,10 @@ def register_competitors():
     phone_entry = tk.Entry(register_window)
     phone_entry.pack(padx=100, pady=10)
 
-    competition_label = tk.Label(register_window, text="ID Zawodów:")
-    competition_label.pack()
-    competition_entry = tk.Entry(register_window)
-    competition_entry.pack(padx=100, pady=10)
+    guardian_label = tk.Label(register_window, text="Dane opiekuna:")
+    guardian_label.pack()
+    guardian_entry = tk.Entry(register_window)
+    guardian_entry.pack(padx=100, pady=10)
 
     vehicle = tk.StringVar()
     bike_radio = tk.Radiobutton(register_window, text="Rower", variable=vehicle, value="rower")
@@ -75,18 +71,13 @@ def modify_competitors():
         nazwisko = surname_entry.get()
         data_urodzenia = dob_entry.get()
         pojazd = vehicle_entry.get()
-
-        c.execute('''
-            UPDATE Osoba
-            SET imie = ?, nazwisko = ?, dataUr = ?
-            WHERE id = (SELECT Osoba_id FROM Zawodnik WHERE id = ?)
-        ''', (imie, nazwisko, data_urodzenia, id_zawodnika))
-
+        nr_telefonu = phone_entry.get()
+        dane_opiekuna = guardian_entry.get()
         c.execute('''
             UPDATE Zawodnik
-            SET pojazd = ?
+            SET imie = ?, nazwisko = ?, dataUrodzenia = ?, nrTelefonu = ?, daneOpiekuna = ?, pojazd = ?
             WHERE id = ?
-        ''', (pojazd, id_zawodnika))
+        ''', (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, id_zawodnika))
 
         conn.commit()
         messagebox.showinfo("Informacja", "Dane zawodnika zaktualizowane pomyślnie!")
@@ -121,6 +112,16 @@ def modify_competitors():
     vehicle_entry = tk.Entry(modify_window)
     vehicle_entry.pack(padx=100, pady=10)
 
+    phone_label = tk.Label(modify_window, text="Numer telefonu:")
+    phone_label.pack()
+    phone_entry = tk.Entry(modify_window)
+    phone_entry.pack(padx=100, pady=10)
+
+    guardian_label = tk.Label(modify_window, text="Dane opiekuna:")
+    guardian_label.pack()
+    guardian_entry = tk.Entry(modify_window)
+    guardian_entry.pack(padx=100, pady=10)
+
     save_button = tk.Button(modify_window, text="Zapisz", command=update_competitor)
     save_button.pack(pady=20)
 
@@ -144,7 +145,7 @@ def view_competitors():
     view_window.title("Zawodnicy")
 
     original_df = pd.read_sql_query(
-        "SELECT Zawodnik.id, Osoba.imie, Osoba.nazwisko, Osoba.dataUr, Zawodnik.pojazd FROM Zawodnik JOIN Osoba ON Zawodnik.Osoba_id = Osoba.id",
+        "SELECT id, imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd FROM Zawodnik",
         conn)
 
     df = original_df.copy()
@@ -171,33 +172,65 @@ def quit_app():
     window.quit()
 
 
+def refresh_table():
+    for row in tree.get_children():
+        tree.delete(row)
+
+    c.execute("SELECT * FROM Zawodnik")
+    rows = c.fetchall()
+
+    for row in rows:
+        tree.insert('', 'end', values=row)
+
+
 window = tk.Tk()
-window.geometry('400x300')
+window.geometry('1200x400')
 window.title("System do mierzenia czasu na zawodach rowerowych")
 
-frame1 = tk.Frame(window)
-frame1.pack(fill=tk.X)
-register_button = tk.Button(frame1, text="Rejestracja zawodników", command=register_competitors)
+button_frame = tk.Frame(window)
+button_frame.grid(row=0, column=0, sticky='ns')
+
+register_button = tk.Button(button_frame, text="Rejestracja zawodników", command=register_competitors)
 register_button.pack(padx=100, pady=20)
 
-frame2 = tk.Frame(window)
-frame2.pack(fill=tk.X)
-modify_button = tk.Button(frame2, text="Modyfikacja zawodników", command=modify_competitors)
+modify_button = tk.Button(button_frame, text="Modyfikacja zawodników", command=modify_competitors)
 modify_button.pack(padx=100, pady=20)
 
-frame3 = tk.Frame(window)
-frame3.pack(fill=tk.X)
-view_button = tk.Button(frame3, text="Zawodnicy", command=view_competitors)
+view_button = tk.Button(button_frame, text="Zawodnicy", command=view_competitors)
 view_button.pack(padx=100, pady=20)
 
-frame4 = tk.Frame(window)
-frame4.pack(fill=tk.X)
-start_button = tk.Button(frame4, text="Start zawodów", command=start_competition)
+start_button = tk.Button(button_frame, text="Start zawodów", command=start_competition)
 start_button.pack(padx=100, pady=20)
 
-frame5 = tk.Frame(window)
-frame5.pack(fill=tk.X)
-exit_button = tk.Button(frame5, text="Wyjście", command=quit_app)
+exit_button = tk.Button(button_frame, text="Wyjście", command=quit_app)
 exit_button.pack(padx=100, pady=20)
+
+table_frame = tk.Frame(window)
+table_frame.grid(row=0, column=1, sticky='ns', pady=(20,0))
+
+
+tree = ttk.Treeview(table_frame)
+tree["columns"]=("one","two","three","four","five","six","seven")
+tree.column("#0", width=0)
+tree.column("one", width=50)
+tree.column("two", width=100)
+tree.column("three", width=100)
+tree.column("four", width=100)
+tree.column("five", width=100)
+tree.column("six", width=150)
+tree.column("seven", width=100)
+
+tree.heading("one", text="ID")
+tree.heading("two", text="Imię")
+tree.heading("three", text="Nazwisko")
+tree.heading("four", text="Data urodzenia")
+tree.heading("five", text="Numer telefonu")
+tree.heading("six", text="Dane opiekuna")
+tree.heading("seven", text="Pojazd")
+
+tree.pack()
+
+refresh_button = tk.Button(table_frame, text="Odśwież", command=refresh_table)
+refresh_button.pack(pady=20)
 
 window.mainloop()
