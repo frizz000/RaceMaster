@@ -1,6 +1,6 @@
 import sqlite3
 
-conn = sqlite3.connect('../zawody.db')
+conn = sqlite3.connect('zawody.db')
 c = conn.cursor()
 
 c.execute('''
@@ -29,7 +29,6 @@ CREATE TABLE Zawodnik (
     id integer NOT NULL CONSTRAINT Zawodnik_pk PRIMARY KEY,
     imie varchar(50) NOT NULL,
     nazwisko varchar(50) NOT NULL,
-    plec varchar(50) NOT NULL,
     dataUrodzenia date NOT NULL,
     nrTelefonu varchar(50) NOT NULL,
     daneOpiekuna varchar(100),

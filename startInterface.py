@@ -10,16 +10,18 @@ def register_competitors():
     def save_competitor():
         imie = name_entry.get()
         nazwisko = surname_entry.get()
-        plec = sex.get()
         data_urodzenia = dob_entry.get()
         kategoria = category_entry.get()
         pojazd = vehicle.get()
         nr_telefonu = phone_entry.get()
         dane_opiekuna = guardian_entry.get()
 
+        c.execute('SELECT id FROM Kategoria WHERE nazwa = ?', (kategoria,))
+        kategoria = c.fetchone()[0]
+
         c.execute(
-            'INSERT INTO Zawodnik (imie, nazwisko, plec, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            (imie, nazwisko, plec, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria))
+            'INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria))
 
         conn.commit()
         messagebox.showinfo("Informacja", "Zawodnik zarejestrowany pomyślnie!")
@@ -38,15 +40,6 @@ def register_competitors():
     surname_label.pack()
     surname_entry = tk.Entry(register_window)
     surname_entry.pack(padx=100, pady=10)
-
-    sex_label = tk.Label(register_window, text="Płeć:")
-    sex_label.pack()
-    sex = tk.StringVar(register_window)
-    sex.set("M")
-    man_radio = tk.Radiobutton(register_window, text="Chłopak", variable=sex, value="M")
-    man_radio.pack()
-    woman = tk.Radiobutton(register_window, text="Dziewczyna", variable=sex, value="K")
-    woman.pack()
 
     dob_label = tk.Label(register_window, text="Data urodzenia:")
     dob_label.pack()
@@ -83,18 +76,20 @@ def modify_competitors():
         id_zawodnika = id_entry.get()
         imie = name_entry.get()
         nazwisko = surname_entry.get()
-        plec = sex.get()
         data_urodzenia = dob_entry.get()
         pojazd = vehicle.get()
         nr_telefonu = phone_entry.get()
         dane_opiekuna = guardian_entry.get()
         kategoria = category_entry.get()
 
+        c.execute('SELECT id FROM Kategoria WHERE nazwa = ?', (kategoria,))
+        kategoria = c.fetchone()[0]
+
         c.execute('''
             UPDATE Zawodnik
-            SET imie = ?, nazwisko = ?, plec = ?, dataUrodzenia = ?, nrTelefonu = ?, daneOpiekuna = ?, pojazd = ?, Kategoria_id = ?
+            SET imie = ?, nazwisko = ?, dataUrodzenia = ?, nrTelefonu = ?, daneOpiekuna = ?, pojazd = ?, Kategoria_id = ?
             WHERE id = ?
-        ''', (imie, nazwisko, plec, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria, id_zawodnika))
+        ''', (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria, id_zawodnika))
 
         conn.commit()
         messagebox.showinfo("Informacja", "Dane zawodnika zaktualizowane pomyślnie!")
@@ -118,13 +113,6 @@ def modify_competitors():
     surname_label.pack()
     surname_entry = tk.Entry(modify_window)
     surname_entry.pack(padx=100, pady=10)
-
-    sex_label = tk.Label(modify_window, text="Płeć:")
-    sex_label.pack()
-    sex = tk.StringVar(modify_window)
-    sex.set("M")
-    sex_combobox = ttk.Combobox(modify_window, textvariable=sex, values=["M", "K"])
-    sex_combobox.pack(padx=100, pady=10)
 
     dob_label = tk.Label(modify_window, text="Data urodzenia:")
     dob_label.pack()
@@ -225,7 +213,9 @@ def filter_by_category(event=None):
     category = category_combobox.get() or ''
 
     c.execute("""
-        SELECT Zawodnik.*, Kategoria.nazwa
+        SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko, 
+        Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
+        Zawodnik.pojazd, Kategoria.nazwa
         FROM Zawodnik
         JOIN Kategoria 
         ON Kategoria_id = Kategoria.id
@@ -243,9 +233,24 @@ def filter_table(vehicle=None):
         tree.delete(row)
 
     if vehicle:
-        c.execute("SELECT * FROM Zawodnik WHERE pojazd=?", (vehicle,))
+        c.execute("""
+            SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko, 
+            Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
+            Zawodnik.pojazd, Kategoria.nazwa
+            FROM Zawodnik
+            JOIN Kategoria
+            ON Kategoria_id = Kategoria.id
+            WHERE pojazd=?
+        """, (vehicle,))
     else:
-        c.execute("SELECT * FROM Zawodnik")
+        c.execute("""
+            SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko,
+            Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
+            Zawodnik.pojazd, Kategoria.nazwa
+            FROM Zawodnik
+            JOIN Kategoria
+            ON Kategoria_id = Kategoria.id
+        """)
 
     rows = c.fetchall()
 
@@ -258,12 +263,21 @@ def search_table():
 
     keyword = search_entry.get()
 
-    c.execute("SELECT * FROM Zawodnik WHERE imie LIKE ? OR nazwisko LIKE ?", (f'%{keyword}%', f'%{keyword}%'))
+    c.execute("""
+        SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko,
+        Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
+        Zawodnik.pojazd, Kategoria.nazwa
+        FROM Zawodnik
+        JOIN Kategoria
+        ON Kategoria_id = Kategoria.id
+        WHERE Zawodnik.imie LIKE ? OR Zawodnik.nazwisko LIKE ?
+    """, (f'%{keyword}%', f'%{keyword}%'))
 
     rows = c.fetchall()
 
     for index, row in enumerate(rows, start=1):
         tree.insert('', 'end', values=(index,) + row)
+
 
 
 
@@ -295,29 +309,27 @@ table_frame.grid(row=0, column=1, sticky='ns', pady=(20,0))
 
 
 tree = ttk.Treeview(table_frame)
-tree["columns"] = ("zero","one","two","three","four","five","six","seven","eight","nine")
+tree["columns"] = ("zero","one","two","three","four","five","six","seven","eight")
 tree.column("#0", width=0)
 tree.column("zero", width=50)
 tree.column("one", width=50)
 tree.column("two", width=100)
 tree.column("three", width=100)
-tree.column("four", width=50)
+tree.column("four", width=100)
 tree.column("five", width=100)
-tree.column("six", width=150)
+tree.column("six", width=250)
 tree.column("seven", width=100)
 tree.column("eight", width=100)
-tree.column("nine", width=100)
 
 tree.heading("zero", text="Numer")
 tree.heading("one", text="ID")
 tree.heading("two", text="Imię")
 tree.heading("three", text="Nazwisko")
-tree.heading("four", text="Płeć")
-tree.heading("five", text="Data urodzenia")
-tree.heading("six", text="Nr telefonu")
-tree.heading("seven", text="Dane opiekuna")
-tree.heading("eight", text="Pojazd")
-tree.heading("nine", text="Kat. wiekowa")
+tree.heading("four", text="Data urodzenia")
+tree.heading("five", text="Nr telefonu")
+tree.heading("six", text="Dane opiekuna")
+tree.heading("seven", text="Pojazd")
+tree.heading("eight", text="Kat. wiekowa")
 
 tree.pack()
 

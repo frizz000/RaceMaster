@@ -25,7 +25,6 @@ CREATE TABLE Zawodnik (
     id integer NOT NULL CONSTRAINT Zawodnik_pk PRIMARY KEY,
     imie varchar(50) NOT NULL,
     nazwisko varchar(50) NOT NULL,
-    plec varchar(50) NOT NULL,
     dataUrodzenia date NOT NULL,
     nrTelefonu varchar(50) NOT NULL,
     daneOpiekuna varchar(100),
@@ -41,10 +40,10 @@ INSERT INTO Kategoria (nazwa, rokUrodzeniaStart, rokUrodzeniaEnd) VALUES
     ('Młodzież', 2003, 2007),
     ('Dzieci', 2008, 2023);
 
-INSERT INTO Zawodnik (imie, nazwisko, plec, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES
-    ('Jan', 'Kowalski', 'M', '1990-05-10', '123456789', 'Anna Kowalska', 'rower', 1),
-    ('Anna', 'Nowak', 'K', '2005-07-15', '987654321', 'Jan Nowak', 'hulajnoga', 2),
-    ('Adam', 'Wiśniewski', 'M', '2010-12-03', '456123789', 'Ewa Wiśniewska', 'rower', 3);
+INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES
+    ('Jan', 'Kowalski','1990-05-10', '123456789', 'Anna Kowalska', 'rower', 1),
+    ('Anna', 'Nowak','2005-07-15', '987654321', 'Jan Nowak', 'hulajnoga', 2),
+    ('Adam', 'Wiśniewski','2010-12-03', '456123789', 'Ewa Wiśniewska', 'rower', 3);
 
 INSERT INTO Przejazd (czasPrzejazdu, notatka, Zawodnik_id) VALUES
     (15.6, 'Bardzo dobry czas!', 1),
