@@ -20,7 +20,7 @@ def register_competitors():
         kategoria = c.fetchone()[0]
 
         c.execute(
-            'INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
             (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria))
 
         conn.commit()
