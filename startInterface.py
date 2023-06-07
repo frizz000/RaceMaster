@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 import sqlite3
+from raceInterface import RaceApp
 
 conn = sqlite3.connect('zawody.db')
 c = conn.cursor()
@@ -145,7 +146,9 @@ def modify_competitors():
 
 
 def start_competition():
-    messagebox.showinfo("Informacja", "Funkcja startu zawodów jeszcze nie została zaimplementowana.")
+    root = tk.Toplevel(window)
+    app = RaceApp(root)
+    app.mainloop()
 
 from datetime import datetime
 
