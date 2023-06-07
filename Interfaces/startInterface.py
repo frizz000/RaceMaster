@@ -3,7 +3,7 @@ from tkinter import messagebox, ttk
 import sqlite3
 from raceInterface import RaceApp
 
-conn = sqlite3.connect('zawody.db')
+conn = sqlite3.connect('../zawody.db')
 c = conn.cursor()
 
 
@@ -42,7 +42,7 @@ def register_competitors():
     surname_entry = tk.Entry(register_window)
     surname_entry.pack(padx=100, pady=10)
 
-    dob_label = tk.Label(register_window, text="Data urodzenia:")
+    dob_label = tk.Label(register_window, text="DB urodzenia:")
     dob_label.pack()
     dob_entry = tk.Entry(register_window)
     dob_entry.pack(padx=100, pady=10)
@@ -115,7 +115,7 @@ def modify_competitors():
     surname_entry = tk.Entry(modify_window)
     surname_entry.pack(padx=100, pady=10)
 
-    dob_label = tk.Label(modify_window, text="Data urodzenia:")
+    dob_label = tk.Label(modify_window, text="DB urodzenia:")
     dob_label.pack()
     dob_entry = tk.Entry(modify_window)
     dob_entry.pack(padx=100, pady=10)
@@ -328,7 +328,7 @@ tree.heading("zero", text="Numer")
 tree.heading("one", text="ID")
 tree.heading("two", text="Imię")
 tree.heading("three", text="Nazwisko")
-tree.heading("four", text="Data urodzenia")
+tree.heading("four", text="DB urodzenia")
 tree.heading("five", text="Nr telefonu")
 tree.heading("six", text="Dane opiekuna")
 tree.heading("seven", text="Pojazd")
