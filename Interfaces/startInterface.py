@@ -2,8 +2,9 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import sqlite3
 from raceInterface import RaceApp
+from datetime import datetime
 
-conn = sqlite3.connect('../zawody.db')
+conn = sqlite3.connect('zawody.db')
 c = conn.cursor()
 
 
@@ -150,8 +151,6 @@ def start_competition():
     app = RaceApp(root)
     app.mainloop()
 
-from datetime import datetime
-
 def set_category():
     def save_category():
         age_start = int(start_age_entry.get())
@@ -197,7 +196,7 @@ def set_category():
 def clear_competitors():
     delete_all_competitors = messagebox.askyesno("Potwierdzenie", "Czy na pewno chcesz usunąć wszystkich zawodników ich dane oraz kategorie?")
     if delete_all_competitors:
-        c.execute("DELETE FROM Zawodnik")
+        c.execute("DELETE FROM Zaw odnik")
         c.execute("DELETE FROM Kategoria")
         c.execute("DELETE FROM Przejazd")
         conn.commit()

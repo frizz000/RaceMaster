@@ -7,7 +7,7 @@ from datetime import datetime
 class RaceApp:
     def __init__(self, root):
         self.root = root
-        self.conn = sqlite3.connect('../zawody.db')
+        self.conn = sqlite3.connect('zawody.db')
         self.cursor = self.conn.cursor()
         self.current_rider_id = None
         self.start_time = None
@@ -101,3 +101,7 @@ class RaceApp:
                 self.stop_button['state'] = 'disabled'
         else:
             self.current_rider_label['text'] = 'Nie wybrano zawodnika.'
+
+    def mainloop(self):
+        self.root.mainloop()
+
