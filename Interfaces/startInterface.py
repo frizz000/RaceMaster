@@ -148,6 +148,8 @@ def modify_competitors():
 
 def start_competition():
     root = tk.Toplevel(window)
+    root.geometry('1350x270')
+    root.resizable(False, False)
     app = RaceApp(root)
     app.mainloop()
 
