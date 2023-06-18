@@ -1,7 +1,11 @@
+import os
+import threading
 import tkinter as tk
 from tkinter import ttk
 import sqlite3
 from datetime import datetime
+
+import cv2
 
 
 class RaceApp:
@@ -11,11 +15,12 @@ class RaceApp:
         self.cursor = self.conn.cursor()
         self.current_rider_id = None
         self.start_time = None
+        self.waiting = False
 
         self.category_select = ttk.Combobox(root)
         self.category_select.grid(row=0, column=0)
 
-        self.start_button = tk.Button(root, text='Start', command=self.start_timer, state='disabled')
+        self.start_button = tk.Button(root, text='Aktywuj', command=self.activate_camera, state='disabled')
         self.start_button.grid(row=0, column=1)
 
         self.stop_button = tk.Button(root, text='Stop', command=self.stop_timer)
@@ -74,6 +79,66 @@ class RaceApp:
         else:
             self.start_button['state'] = 'disabled'
 
+    def activate_camera(self):
+        self.camera_thread = threading.Thread(target=self.run_camera)
+        self.camera_thread.start()
+
+    def run_camera(self):
+        cam = cv2.VideoCapture(0)
+        pngName = "background.png"
+
+        if os.path.isfile(pngName):
+            os.remove(pngName)
+
+        ret, frame = cam.read()
+        cv2.imwrite(pngName, frame)
+
+        background = cv2.imread(pngName)
+        background = cv2.cvtColor(background, cv2.COLOR_BGR2GRAY)
+        background = cv2.GaussianBlur(background, (21, 21), 0)
+
+        while True:
+            _, frame = cam.read()
+
+            g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            g = cv2.GaussianBlur(g, (21, 21), 0)
+
+            diff = cv2.absdiff(background, g)
+
+            thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)[1]
+            thresh = cv2.dilate(thresh, None, iterations=2)
+
+            resized = cv2.resize(thresh, (10, 10), fx=0, fy=0, interpolation=cv2.INTER_CUBIC)
+
+            cv2.imshow("Camera", resized)
+            height, width = resized.shape
+
+            countWhite = 0
+            for x in range(0, width):
+                for y in range(0, height):
+                    if resized[x, y] == 255:
+                        countWhite += 1
+
+            if countWhite >= 30 and not self.waiting:
+                print(1)
+                if self.start_time is None:
+                    self.start_timer()
+                    self.waiting = True
+                    self.root.after(3000, self.end_waiting)
+                else:
+                    self.stop_timer()
+
+            if cv2.waitKey(1) == ord('x'):
+                break
+
+        os.remove(pngName)
+        cam.release()
+        cv2.destroyAllWindows()
+        os.remove(pngName)
+
+    def end_waiting(self):
+        self.waiting = False
+
     def start_timer(self):
         self.start_time = datetime.now()
         self.update_timer_label()
@@ -92,6 +157,7 @@ class RaceApp:
         self.update_current_rider_label()
 
         self.timer_label.after_cancel(self.timer_after_id)
+        self.start_time = None  # Reset start time
 
     def update_timer_label(self):
         elapsed_time = datetime.now() - self.start_time
