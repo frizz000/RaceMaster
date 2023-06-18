@@ -1,252 +1,352 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 import sqlite3
-from raceInterface import RaceApp
+from raceInterface import RaceInterface
 from datetime import datetime
 
-conn = sqlite3.connect('zawody.db')
+conn = sqlite3.connect('../zawody.db')
 c = conn.cursor()
 
 
-def register_competitors():
-    def save_competitor():
-        imie = name_entry.get()
-        nazwisko = surname_entry.get()
-        data_urodzenia = dob_entry.get()
-        kategoria = category_entry.get()
-        pojazd = vehicle.get()
-        nr_telefonu = phone_entry.get()
-        dane_opiekuna = guardian_entry.get()
+class MainInterface:
+    def __init__(self):
+        self.window = tk.Tk()
+        self.window.geometry('1350x290')
+        self.window.resizable(False, False)
+        self.window.title("System do mierzenia czasu na zawodach rowerowych")
 
-        c.execute('SELECT id FROM Kategoria WHERE nazwa = ?', (kategoria,))
-        kategoria = c.fetchone()[0]
+        self.button_frame = tk.Frame(self.window)
+        self.button_frame.grid(row=0, column=0, sticky='ns')
 
-        c.execute(
-            'INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria))
+        self.register_button = tk.Button(self.button_frame, text="Rejestracja zawodników",
+                                         command=self.register_competitors)
+        self.register_button.pack(padx=100, pady=(20, 10))
 
-        conn.commit()
-        messagebox.showinfo("Informacja", "Zawodnik zarejestrowany pomyślnie!")
-        register_window.destroy()
+        self.modify_button = tk.Button(self.button_frame, text="Modyfikacja zawodników",
+                                       command=self.modify_competitors)
+        self.modify_button.pack(padx=100, pady=10)
 
-    register_window = tk.Toplevel(window)
-    register_window.geometry('400x600')
-    register_window.title("Rejestracja zawodników")
+        self.set_category_button = tk.Button(self.button_frame, text="Zarządzanie kategoriami",
+                                             command=self.set_category)
+        self.set_category_button.pack(padx=100, pady=10)
 
-    name_label = tk.Label(register_window, text="Imię:")
-    name_label.pack()
-    name_entry = tk.Entry(register_window)
-    name_entry.pack(padx=100, pady=10)
+        self.start_button = tk.Button(self.button_frame, text="Start zawodów", command=self.start_competition)
+        self.start_button.pack(padx=100, pady=10)
 
-    surname_label = tk.Label(register_window, text="Nazwisko:")
-    surname_label.pack()
-    surname_entry = tk.Entry(register_window)
-    surname_entry.pack(padx=100, pady=10)
+        self.clear_button = tk.Button(self.button_frame, text="Wyczyść", command=self.clear_competitors)
+        self.clear_button.pack(padx=100, pady=10)
 
-    dob_label = tk.Label(register_window, text="DB urodzenia:")
-    dob_label.pack()
-    dob_entry = tk.Entry(register_window)
-    dob_entry.pack(padx=100, pady=10)
+        self.table_frame = tk.Frame(self.window)
+        self.table_frame.grid(row=0, column=1, sticky='ns', pady=(20, 0))
 
-    category_label = tk.Label(register_window, text="Kategoria:")
-    category_label.pack()
-    category_entry = ttk.Combobox(register_window, values=get_categories())
-    category_entry.pack(padx=100, pady=10)
+        self.tree = ttk.Treeview(self.table_frame)
+        self.tree["columns"] = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight")
+        self.tree.column("#0", width=0)
+        self.tree.column("zero", width=50)
+        self.tree.column("one", width=50)
+        self.tree.column("two", width=100)
+        self.tree.column("three", width=100)
+        self.tree.column("four", width=100)
+        self.tree.column("five", width=100)
+        self.tree.column("six", width=250)
+        self.tree.column("seven", width=100)
+        self.tree.column("eight", width=100)
 
-    phone_label = tk.Label(register_window, text="Numer telefonu:")
-    phone_label.pack()
-    phone_entry = tk.Entry(register_window)
-    phone_entry.pack(padx=100, pady=10)
+        self.tree.heading("zero", text="Numer")
+        self.tree.heading("one", text="ID")
+        self.tree.heading("two", text="Imię")
+        self.tree.heading("three", text="Nazwisko")
+        self.tree.heading("four", text="DB urodzenia")
+        self.tree.heading("five", text="Nr telefonu")
+        self.tree.heading("six", text="Dane opiekuna")
+        self.tree.heading("seven", text="Pojazd")
+        self.tree.heading("eight", text="Kat. wiekowa")
 
-    guardian_label = tk.Label(register_window, text="Dane opiekuna:")
-    guardian_label.pack()
-    guardian_entry = tk.Entry(register_window)
-    guardian_entry.pack(padx=100, pady=10)
+        self.tree.pack()
 
-    vehicle = tk.StringVar()
-    bike_radio = tk.Radiobutton(register_window, text="Rower", variable=vehicle, value="rower")
-    bike_radio.pack()
-    scooter_radio = tk.Radiobutton(register_window, text="Hulajnoga", variable=vehicle, value="hulajnoga")
-    scooter_radio.pack()
+        self.bike_button = tk.Button(self.table_frame, text="Rower", command=lambda: self.filter_table('rower'))
+        self.bike_button.pack(side='left')
 
-    save_button = tk.Button(register_window, text="Zapisz", command=save_competitor)
-    save_button.pack()
+        self.scooter_button = tk.Button(self.table_frame, text="Hulajnoga",
+                                        command=lambda: self.filter_table('hulajnoga'))
+        self.scooter_button.pack(side='left')
 
+        self.all_button = tk.Button(self.table_frame, text="Wszystko", command=self.filter_table)
+        self.all_button.pack(side='left')
 
-def modify_competitors():
-    def update_competitor():
-        id_zawodnika = id_entry.get()
-        imie = name_entry.get()
-        nazwisko = surname_entry.get()
-        data_urodzenia = dob_entry.get()
-        pojazd = vehicle.get()
-        nr_telefonu = phone_entry.get()
-        dane_opiekuna = guardian_entry.get()
-        kategoria = category_entry.get()
+        self.search_label = tk.Label(self.table_frame, text="Szukaj:")
+        self.search_label.pack(side='left')
 
-        c.execute('SELECT id FROM Kategoria WHERE nazwa = ?', (kategoria,))
-        kategoria = c.fetchone()[0]
+        self.search_entry = tk.Entry(self.table_frame)
+        self.search_entry.pack(side='left')
 
-        c.execute('''
-            UPDATE Zawodnik
-            SET imie = ?, nazwisko = ?, dataUrodzenia = ?, nrTelefonu = ?, daneOpiekuna = ?, pojazd = ?, Kategoria_id = ?
-            WHERE id = ?
-        ''', (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria, id_zawodnika))
+        self.search_button = tk.Button(self.table_frame, text="Szukaj", command=self.search_table)
+        self.search_button.pack(side='left')
 
-        conn.commit()
-        messagebox.showinfo("Informacja", "Dane zawodnika zaktualizowane pomyślnie!")
-        modify_window.destroy()
+        self.category_label = tk.Label(self.table_frame, text="Filtruj po kategorii:")
+        self.category_label.pack(side='left')
 
-    modify_window = tk.Toplevel(window)
-    modify_window.geometry('400x700')
-    modify_window.title("Modyfikacja zawodników")
+        self.category_combobox = ttk.Combobox(self.table_frame, values=self.get_categories())
+        self.category_combobox.bind("<<ComboboxSelected>>", self.filter_by_category)
+        self.category_combobox.pack(side='left')
 
-    id_label = tk.Label(modify_window, text="ID zawodnika:")
-    id_label.pack()
-    id_entry = tk.Entry(modify_window)
-    id_entry.pack(padx=100, pady=10)
+    def register_competitors(self):
+        def save_competitor():
+            imie = name_entry.get()
+            nazwisko = surname_entry.get()
+            data_urodzenia = dob_entry.get()
+            kategoria = category_entry.get()
+            pojazd = vehicle.get()
+            nr_telefonu = phone_entry.get()
+            dane_opiekuna = guardian_entry.get()
 
-    name_label = tk.Label(modify_window, text="Imię:")
-    name_label.pack()
-    name_entry = tk.Entry(modify_window)
-    name_entry.pack(padx=100, pady=10)
+            c.execute('SELECT id FROM Kategoria WHERE nazwa = ?', (kategoria,))
+            kategoria = c.fetchone()[0]
 
-    surname_label = tk.Label(modify_window, text="Nazwisko:")
-    surname_label.pack()
-    surname_entry = tk.Entry(modify_window)
-    surname_entry.pack(padx=100, pady=10)
+            c.execute(
+                'INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria))
 
-    dob_label = tk.Label(modify_window, text="DB urodzenia:")
-    dob_label.pack()
-    dob_entry = tk.Entry(modify_window)
-    dob_entry.pack(padx=100, pady=10)
+            conn.commit()
+            messagebox.showinfo("Informacja", "Zawodnik zarejestrowany pomyślnie!")
+            register_window.destroy()
 
-    category_label = tk.Label(modify_window, text="Kategoria:")
-    category_label.pack()
-    category_entry = ttk.Combobox(modify_window, values=get_categories())
-    category_entry.pack(padx=100, pady=10)
+        register_window = tk.Toplevel(self.window)
+        register_window.geometry('400x600')
+        register_window.title("Rejestracja zawodników")
 
-    vehicle = tk.StringVar()
-    bike_radio = tk.Radiobutton(modify_window, text="Rower", variable=vehicle, value="rower")
-    bike_radio.pack()
-    scooter_radio = tk.Radiobutton(modify_window, text="Hulajnoga", variable=vehicle, value="hulajnoga")
-    scooter_radio.pack()
+        name_label = tk.Label(register_window, text="Imię:")
+        name_label.pack()
+        name_entry = tk.Entry(register_window)
+        name_entry.pack(padx=100, pady=10)
 
-    phone_label = tk.Label(modify_window, text="Numer telefonu:")
-    phone_label.pack()
-    phone_entry = tk.Entry(modify_window)
-    phone_entry.pack(padx=100, pady=10)
+        surname_label = tk.Label(register_window, text="Nazwisko:")
+        surname_label.pack()
+        surname_entry = tk.Entry(register_window)
+        surname_entry.pack(padx=100, pady=10)
 
-    guardian_label = tk.Label(modify_window, text="Dane opiekuna:")
-    guardian_label.pack()
-    guardian_entry = tk.Entry(modify_window)
-    guardian_entry.pack(padx=100, pady=10)
+        dob_label = tk.Label(register_window, text="DB urodzenia:")
+        dob_label.pack()
+        dob_entry = tk.Entry(register_window)
+        dob_entry.pack(padx=100, pady=10)
 
-    save_button = tk.Button(modify_window, text="Zapisz", command=update_competitor)
-    save_button.pack(pady=20)
+        category_label = tk.Label(register_window, text="Kategoria:")
+        category_label.pack()
+        category_entry = ttk.Combobox(register_window, values=self.get_categories())
+        category_entry.pack(padx=100, pady=10)
 
+        phone_label = tk.Label(register_window, text="Numer telefonu:")
+        phone_label.pack()
+        phone_entry = tk.Entry(register_window)
+        phone_entry.pack(padx=100, pady=10)
 
-def start_competition():
-    root = tk.Toplevel(window)
-    root.geometry('1350x270')
-    root.resizable(False, False)
-    app = RaceApp(root)
-    app.mainloop()
+        guardian_label = tk.Label(register_window, text="Dane opiekuna:")
+        guardian_label.pack()
+        guardian_entry = tk.Entry(register_window)
+        guardian_entry.pack(padx=100, pady=10)
 
-def set_category():
-    def save_category():
-        age_start = int(start_age_entry.get())
-        age_end = int(end_age_entry.get())
-        category_name = category_entry.get()
-        current_year = datetime.now().year
+        vehicle = tk.StringVar()
+        bike_radio = tk.Radiobutton(register_window, text="Rower", variable=vehicle, value="rower")
+        bike_radio.pack()
+        scooter_radio = tk.Radiobutton(register_window, text="Hulajnoga", variable=vehicle, value="hulajnoga")
+        scooter_radio.pack()
 
-        birth_year_start = current_year - age_end
-        birth_year_end = current_year - age_start
+        save_button = tk.Button(register_window, text="Zapisz", command=save_competitor)
+        save_button.pack()
 
-        c.execute('INSERT INTO Kategoria (nazwa, rokUrodzeniaStart, rokUrodzeniaEnd) VALUES (?, ?, ?)',
-                  (category_name, birth_year_start, birth_year_end))
+    def modify_competitors(self):
+        def update_competitor():
+            id_zawodnika = id_entry.get()
+            imie = name_entry.get()
+            nazwisko = surname_entry.get()
+            data_urodzenia = dob_entry.get()
+            pojazd = vehicle.get()
+            nr_telefonu = phone_entry.get()
+            dane_opiekuna = guardian_entry.get()
+            kategoria = category_entry.get()
 
-        conn.commit()
-        messagebox.showinfo("Informacja", "Kategoria dodana pomyślnie!")
+            c.execute('SELECT id FROM Kategoria WHERE nazwa = ?', (kategoria,))
+            kategoria = c.fetchone()[0]
 
-        category_combobox['values'] = get_categories()
+            c.execute('''
+                UPDATE Zawodnik
+                SET imie = ?, nazwisko = ?, dataUrodzenia = ?, nrTelefonu = ?, daneOpiekuna = ?, pojazd = ?, Kategoria_id = ?
+                WHERE id = ?
+            ''', (imie, nazwisko, data_urodzenia, nr_telefonu, dane_opiekuna, pojazd, kategoria, id_zawodnika))
 
-        category_window.destroy()
+            conn.commit()
+            messagebox.showinfo("Informacja", "Dane zawodnika zaktualizowane pomyślnie!")
+            modify_window.destroy()
 
-    category_window = tk.Toplevel(window)
-    category_window.geometry('400x300')
-    category_window.title("Ustawianie kategorii wiekowych")
+        modify_window = tk.Toplevel(self.window)
+        modify_window.geometry('400x700')
+        modify_window.title("Modyfikacja zawodników")
 
-    category_label = tk.Label(category_window, text="Nazwa kategorii:")
-    category_label.pack()
-    category_entry = tk.Entry(category_window)
-    category_entry.pack(padx=100, pady=10)
+        id_label = tk.Label(modify_window, text="ID zawodnika:")
+        id_label.pack()
+        id_entry = tk.Entry(modify_window)
+        id_entry.pack(padx=100, pady=10)
 
-    start_age_label = tk.Label(category_window, text="Wiek startowy:")
-    start_age_label.pack()
-    start_age_entry = tk.Entry(category_window)
-    start_age_entry.pack(padx=100, pady=10)
+        name_label = tk.Label(modify_window, text="Imię:")
+        name_label.pack()
+        name_entry = tk.Entry(modify_window)
+        name_entry.pack(padx=100, pady=10)
 
-    end_age_label = tk.Label(category_window, text="Wiek końcowy:")
-    end_age_label.pack()
-    end_age_entry = tk.Entry(category_window)
-    end_age_entry.pack(padx=100, pady=10)
+        surname_label = tk.Label(modify_window, text="Nazwisko:")
+        surname_label.pack()
+        surname_entry = tk.Entry(modify_window)
+        surname_entry.pack(padx=100, pady=10)
 
-    save_button = tk.Button(category_window, text="Zapisz", command=save_category)
-    save_button.pack(padx=100, pady=10)
+        dob_label = tk.Label(modify_window, text="DB urodzenia:")
+        dob_label.pack()
+        dob_entry = tk.Entry(modify_window)
+        dob_entry.pack(padx=100, pady=10)
 
-def clear_competitors():
-    delete_all_competitors = messagebox.askyesno("Potwierdzenie", "Czy na pewno chcesz usunąć wszystkich zawodników ich dane oraz kategorie?")
-    if delete_all_competitors:
-        c.execute("DELETE FROM Zaw odnik")
-        c.execute("DELETE FROM Kategoria")
-        c.execute("DELETE FROM Przejazd")
-        conn.commit()
-        messagebox.showinfo("Informacja", "Baza danych została wyczyszczona!")
-    filter_table()
+        category_label = tk.Label(modify_window, text="Kategoria:")
+        category_label.pack()
+        category_entry = ttk.Combobox(modify_window, values=self.get_categories())
+        category_entry.pack(padx=100, pady=10)
 
-def get_categories():
-    c.execute("SELECT nazwa FROM Kategoria")
-    categories = c.fetchall()
-    return [category[0] for category in categories]
+        vehicle = tk.StringVar()
+        bike_radio = tk.Radiobutton(modify_window, text="Rower", variable=vehicle, value="rower")
+        bike_radio.pack()
+        scooter_radio = tk.Radiobutton(modify_window, text="Hulajnoga", variable=vehicle, value="hulajnoga")
+        scooter_radio.pack()
 
-def filter_by_category(event=None):
-    for row in tree.get_children():
-        tree.delete(row)
+        phone_label = tk.Label(modify_window, text="Numer telefonu:")
+        phone_label.pack()
+        phone_entry = tk.Entry(modify_window)
+        phone_entry.pack(padx=100, pady=10)
 
-    category = category_combobox.get() or ''
+        guardian_label = tk.Label(modify_window, text="Dane opiekuna:")
+        guardian_label.pack()
+        guardian_entry = tk.Entry(modify_window)
+        guardian_entry.pack(padx=100, pady=10)
 
-    c.execute("""
-        SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko, 
-        Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
-        Zawodnik.pojazd, Kategoria.nazwa
-        FROM Zawodnik
-        JOIN Kategoria 
-        ON Kategoria_id = Kategoria.id
-        WHERE Kategoria.nazwa = ?
-    """, (category,))
+        save_button = tk.Button(modify_window, text="Zapisz", command=update_competitor)
+        save_button.pack(pady=20)
 
-    rows = c.fetchall()
+    def start_competition(self):
+        root = tk.Toplevel(self.window)
+        root.geometry('1350x270')
+        root.resizable(False, False)
+        app = RaceInterface(root)
+        app.mainloop()
 
-    for index, row in enumerate(rows, start=1):
-        tree.insert('', 'end', values=(index,) + row)
+    def set_category(self):
+        def save_category():
+            age_start = int(start_age_entry.get())
+            age_end = int(end_age_entry.get())
+            category_name = category_entry.get()
+            current_year = datetime.now().year
 
+            birth_year_start = current_year - age_end
+            birth_year_end = current_year - age_start
 
-def filter_table(vehicle=None):
-    for row in tree.get_children():
-        tree.delete(row)
+            c.execute('INSERT INTO Kategoria (nazwa, rokUrodzeniaStart, rokUrodzeniaEnd) VALUES (?, ?, ?)',
+                      (category_name, birth_year_start, birth_year_end))
 
-    if vehicle:
+            conn.commit()
+            messagebox.showinfo("Informacja", "Kategoria dodana pomyślnie!")
+
+            self.category_combobox['values'] = self.get_categories()
+
+            category_window.destroy()
+
+        category_window = tk.Toplevel(self.window)
+        category_window.geometry('400x300')
+        category_window.title("Ustawianie kategorii wiekowych")
+
+        category_label = tk.Label(category_window, text="Nazwa kategorii:")
+        category_label.pack()
+        category_entry = tk.Entry(category_window)
+        category_entry.pack(padx=100, pady=10)
+
+        start_age_label = tk.Label(category_window, text="Wiek startowy:")
+        start_age_label.pack()
+        start_age_entry = tk.Entry(category_window)
+        start_age_entry.pack(padx=100, pady=10)
+
+        end_age_label = tk.Label(category_window, text="Wiek końcowy:")
+        end_age_label.pack()
+        end_age_entry = tk.Entry(category_window)
+        end_age_entry.pack(padx=100, pady=10)
+
+        save_button = tk.Button(category_window, text="Zapisz", command=save_category)
+        save_button.pack(padx=100, pady=10)
+
+    def clear_competitors(self):
+        delete_all_competitors = messagebox.askyesno("Potwierdzenie",
+                                                     "Czy na pewno chcesz usunąć wszystkich zawodników ich dane oraz kategorie?")
+        if delete_all_competitors:
+            c.execute("DELETE FROM Zawodnik")
+            c.execute("DELETE FROM Kategoria")
+            c.execute("DELETE FROM Przejazd")
+            conn.commit()
+            messagebox.showinfo("Informacja", "Baza danych została wyczyszczona!")
+        self.filter_table()
+
+    def get_categories(self):
+        c.execute("SELECT nazwa FROM Kategoria")
+        categories = c.fetchall()
+        return [category[0] for category in categories]
+
+    def filter_by_category(self, event=None):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        category = self.category_combobox.get() or ''
+
         c.execute("""
             SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko, 
             Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
             Zawodnik.pojazd, Kategoria.nazwa
             FROM Zawodnik
-            JOIN Kategoria
+            JOIN Kategoria 
             ON Kategoria_id = Kategoria.id
-            WHERE pojazd=?
-        """, (vehicle,))
-    else:
+            WHERE Kategoria.nazwa = ?
+        """, (category,))
+
+        rows = c.fetchall()
+
+        for index, row in enumerate(rows, start=1):
+            self.tree.insert('', 'end', values=(index,) + row)
+
+    def filter_table(self, vehicle=None):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        if vehicle:
+            c.execute("""
+                SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko, 
+                Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
+                Zawodnik.pojazd, Kategoria.nazwa
+                FROM Zawodnik
+                JOIN Kategoria
+                ON Kategoria_id = Kategoria.id
+                WHERE pojazd=?
+            """, (vehicle,))
+        else:
+            c.execute("""
+                SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko,
+                Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
+                Zawodnik.pojazd, Kategoria.nazwa
+                FROM Zawodnik
+                JOIN Kategoria
+                ON Kategoria_id = Kategoria.id
+            """)
+
+        rows = c.fetchall()
+
+        for index, row in enumerate(rows, start=1):
+            self.tree.insert('', 'end', values=(index,) + row)
+
+    def search_table(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        keyword = self.search_entry.get()
+
         c.execute("""
             SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko,
             Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
@@ -254,112 +354,14 @@ def filter_table(vehicle=None):
             FROM Zawodnik
             JOIN Kategoria
             ON Kategoria_id = Kategoria.id
-        """)
+            WHERE Zawodnik.imie LIKE ? OR Zawodnik.nazwisko LIKE ?
+        """, (f'%{keyword}%', f'%{keyword}%'))
 
-    rows = c.fetchall()
+        rows = c.fetchall()
 
-    for index, row in enumerate(rows, start=1):
-        tree.insert('', 'end', values=(index,) + row)
-
-def search_table():
-    for row in tree.get_children():
-        tree.delete(row)
-
-    keyword = search_entry.get()
-
-    c.execute("""
-        SELECT Zawodnik.id, Zawodnik.imie, Zawodnik.nazwisko,
-        Zawodnik.dataUrodzenia, Zawodnik.nrTelefonu, Zawodnik.daneOpiekuna, 
-        Zawodnik.pojazd, Kategoria.nazwa
-        FROM Zawodnik
-        JOIN Kategoria
-        ON Kategoria_id = Kategoria.id
-        WHERE Zawodnik.imie LIKE ? OR Zawodnik.nazwisko LIKE ?
-    """, (f'%{keyword}%', f'%{keyword}%'))
-
-    rows = c.fetchall()
-
-    for index, row in enumerate(rows, start=1):
-        tree.insert('', 'end', values=(index,) + row)
+        for index, row in enumerate(rows, start=1):
+            self.tree.insert('', 'end', values=(index,) + row)
 
 
-
-
-window = tk.Tk()
-window.geometry('1350x290')
-window.resizable(False, False)
-window.title("System do mierzenia czasu na zawodach rowerowych")
-
-button_frame = tk.Frame(window)
-button_frame.grid(row=0, column=0, sticky='ns')
-
-register_button = tk.Button(button_frame, text="Rejestracja zawodników", command=register_competitors)
-register_button.pack(padx=100, pady=(20,10))
-
-modify_button = tk.Button(button_frame, text="Modyfikacja zawodników", command=modify_competitors)
-modify_button.pack(padx=100, pady=10)
-
-set_category_button = tk.Button(button_frame, text="Zarządzanie kategoriami", command=set_category)
-set_category_button.pack(padx=100, pady=10)
-
-start_button = tk.Button(button_frame, text="Start zawodów", command=start_competition)
-start_button.pack(padx=100, pady=10)
-
-clear_button = tk.Button(button_frame, text="Wyczyść", command=clear_competitors)
-clear_button.pack(padx=100, pady=10)
-
-table_frame = tk.Frame(window)
-table_frame.grid(row=0, column=1, sticky='ns', pady=(20,0))
-
-
-tree = ttk.Treeview(table_frame)
-tree["columns"] = ("zero","one","two","three","four","five","six","seven","eight")
-tree.column("#0", width=0)
-tree.column("zero", width=50)
-tree.column("one", width=50)
-tree.column("two", width=100)
-tree.column("three", width=100)
-tree.column("four", width=100)
-tree.column("five", width=100)
-tree.column("six", width=250)
-tree.column("seven", width=100)
-tree.column("eight", width=100)
-
-tree.heading("zero", text="Numer")
-tree.heading("one", text="ID")
-tree.heading("two", text="Imię")
-tree.heading("three", text="Nazwisko")
-tree.heading("four", text="DB urodzenia")
-tree.heading("five", text="Nr telefonu")
-tree.heading("six", text="Dane opiekuna")
-tree.heading("seven", text="Pojazd")
-tree.heading("eight", text="Kat. wiekowa")
-
-tree.pack()
-
-bike_button = tk.Button(table_frame, text="Rower", command=lambda: filter_table('rower'))
-bike_button.pack(side='left')
-
-scooter_button = tk.Button(table_frame, text="Hulajnoga", command=lambda: filter_table('hulajnoga'))
-scooter_button.pack(side='left')
-
-all_button = tk.Button(table_frame, text="Wszystko", command=filter_table)
-all_button.pack(side='left')
-
-search_label = tk.Label(table_frame, text="Szukaj:")
-search_label.pack(side='left')
-
-search_entry = tk.Entry(table_frame)
-search_entry.pack(side='left')
-
-search_button = tk.Button(table_frame, text="Szukaj", command=search_table)
-search_button.pack(side='left')
-
-category_label = tk.Label(table_frame, text="Filtruj po kategorii:")
-category_label.pack(side='left')
-
-category_combobox = ttk.Combobox(table_frame, values=get_categories())
-category_combobox.bind("<<ComboboxSelected>>", filter_by_category)
-category_combobox.pack(side='left')
-
-window.mainloop()
+program = MainInterface()
+program.window.mainloop()
