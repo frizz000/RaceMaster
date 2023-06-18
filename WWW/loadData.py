@@ -1,7 +1,7 @@
 from flask import Flask, render_template
 import sqlite3
 
-app = Flask(__name__, template_folder='../templates')
+app = Flask(__name__, template_folder='../templates', static_folder='../static')
 
 
 @app.route('/')
@@ -10,14 +10,15 @@ def home():
     c = conn.cursor()
 
     c.execute('''
-        SELECT Zawodnik.imie, Zawodnik.nazwisko, Zawodnik.dataUrodzenia, Kategoria.nazwa, Przejazd.czasPrzejazdu
-        FROM Zawodnik
-        JOIN Kategoria ON Zawodnik.Kategoria_id = Kategoria.id
-        JOIN Przejazd ON Zawodnik.id = Przejazd.Zawodnik_id
+            SELECT Zawodnik.id, imie, nazwisko, dataUrodzenia, Kategoria.nazwa, GROUP_CONCAT(Przejazd.czasPrzejazdu)
+            FROM Zawodnik
+            JOIN Kategoria ON Zawodnik.Kategoria_id = Kategoria.id
+            LEFT JOIN Przejazd ON Zawodnik.id = Przejazd.Zawodnik_id
+            GROUP BY Zawodnik.id
         ''')
     zawodnicy = c.fetchall()
-
-    return render_template('index.html', zawodnicy=zawodnicy)
+    max_przejazdy = max(len(zawodnik[5].split(',')) for zawodnik in zawodnicy)
+    return render_template('index.html', zawodnicy=zawodnicy, max_przejazdy=max_przejazdy)
 
 
 if __name__ == '__main__':
