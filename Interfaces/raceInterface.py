@@ -20,10 +20,10 @@ class RaceInterface:
         self.category_select = ttk.Combobox(root)
         self.category_select.grid(row=0, column=0)
 
-        self.start_button = tk.Button(root, text='Aktywuj', command=self.activate_camera, state='disabled')
+        self.start_button = tk.Button(root, text='Start', command=self.start_timer, state='disabled')
         self.start_button.grid(row=0, column=1)
 
-        self.stop_button = tk.Button(root, text='Stop', command=self.stop_timer)
+        self.stop_button = tk.Button(root, text='Stop', command=self.stop_timer, state='disabled')
         self.stop_button.grid(row=0, column=2)
 
         self.timer_label = tk.Label(root, text='00:00:00.000')
@@ -76,76 +76,16 @@ class RaceInterface:
 
         if riders:
             self.start_button['state'] = 'normal'
+            self.stop_button['state'] = 'normal'
         else:
             self.start_button['state'] = 'disabled'
-
-    def activate_camera(self):
-        self.camera_active = True
-        self.camera_thread = threading.Thread(target=self.run_camera)
-        self.camera_thread.start()
-
-    def run_camera(self):
-        cam = cv2.VideoCapture(0)
-        pngName = "../background.png"
-
-        if os.path.isfile(pngName):
-            os.remove(pngName)
-
-        ret, frame = cam.read()
-        cv2.imwrite(pngName, frame)
-
-        background = cv2.imread(pngName)
-        background = cv2.cvtColor(background, cv2.COLOR_BGR2GRAY)
-        background = cv2.GaussianBlur(background, (21, 21), 0)
-
-        while True:
-            _, frame = cam.read()
-
-            g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            g = cv2.GaussianBlur(g, (21, 21), 0)
-
-            diff = cv2.absdiff(background, g)
-
-            thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)[1]
-            thresh = cv2.dilate(thresh, None, iterations=2)
-
-            resized = cv2.resize(thresh, (10, 10), fx=0, fy=0, interpolation=cv2.INTER_CUBIC)
-
-            cv2.imshow("Camera", resized)
-            height, width = resized.shape
-
-            countWhite = 0
-            for x in range(0, width):
-                for y in range(0, height):
-                    if resized[x, y] == 255:
-                        countWhite += 1
-
-            if countWhite >= 30 and not self.waiting:
-                print(1)
-                if not self.camera_active and not self.stop_button_clicked:
-                    self.start_timer()
-                    self.waiting = True
-                    self.root.after(3000, self.end_waiting)
-                elif self.camera_active and self.stop_button_clicked:
-                    self.stop_timer()
-
-            if cv2.waitKey(1) == ord('x'):
-                break
-
-        os.remove(pngName)
-        cam.release()
-        cv2.destroyAllWindows()
-        os.remove(pngName)
-
-    def end_waiting(self):
-        self.waiting = False
+            self.stop_button['state'] = 'disabled'
 
     def start_timer(self):
         self.start_time = datetime.now()
         self.update_timer_label()
 
     def stop_timer(self):
-        self.camera_active = False
         elapsed_time = datetime.now() - self.start_time
         elapsed_seconds = elapsed_time.total_seconds()
 
