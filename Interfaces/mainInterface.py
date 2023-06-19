@@ -366,13 +366,10 @@ class MainInterface:
             self.tree.insert('', 'end', values=(index,) + row)
 
     def export_results(self):
-        conn = sqlite3.connect('../zawody.db')
-        c = conn.cursor()
-
         c.execute("SELECT id, nazwa FROM Kategoria")
         kategorie = c.fetchall()
 
-        with open('../wyniki.txt', 'w') as f:
+        with open('wyniki.txt', 'w') as f:
             for kategoria_id, kategoria_nazwa in kategorie:
                 f.write(f'Kategoria: {kategoria_nazwa}\n')
 
@@ -393,6 +390,7 @@ class MainInterface:
                 f.write('\n')
 
         conn.close()
+        messagebox.showinfo("Informacja", "Wyniki zostały wyeksportowane do pliku wyniki.txt")
 
 
 program = MainInterface()
