@@ -200,7 +200,7 @@ class MainInterface:
         surname_entry = tk.Entry(modify_window)
         surname_entry.pack(padx=100, pady=10)
 
-        dob_label = tk.Label(modify_window, text="DB urodzenia:")
+        dob_label = tk.Label(modify_window, text="Data urodzenia:")
         dob_label.pack()
         dob_entry = tk.Entry(modify_window)
         dob_entry.pack(padx=100, pady=10)

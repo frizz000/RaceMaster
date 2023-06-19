@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 import sqlite3
 from datetime import datetime
+from MeasuringTime.cam import Camera
 
 import cv2
 
@@ -20,11 +21,11 @@ class RaceInterface:
         self.category_select = ttk.Combobox(root)
         self.category_select.grid(row=0, column=0)
 
-        self.start_button = tk.Button(root, text='Start', command=self.start_timer, state='disabled')
+        self.start_button = tk.Button(root, text='Aktywuj kamerę', command=self.start_timer, state='disabled')
         self.start_button.grid(row=0, column=1)
 
-        self.stop_button = tk.Button(root, text='Stop', command=self.stop_timer, state='disabled')
-        self.stop_button.grid(row=0, column=2)
+        self.next_button = tk.Button(root, text='Następny zawodnik', command=self.next_rider, state='disabled')
+        self.next_button.grid(row=0, column=2)
 
         self.timer_label = tk.Label(root, text='00:00:00.000')
         self.timer_label.grid(row=0, column=3)
@@ -76,30 +77,36 @@ class RaceInterface:
 
         if riders:
             self.start_button['state'] = 'normal'
-            self.stop_button['state'] = 'normal'
+            self.next_button['state'] = 'normal'
         else:
             self.start_button['state'] = 'disabled'
-            self.stop_button['state'] = 'disabled'
+            self.next_button['state'] = 'disabled'
 
     def start_timer(self):
-        self.start_time = datetime.now()
-        self.update_timer_label()
+        self.Camera = Camera(50)
+        self.camera_active = True
+        self.measure_time()
+        self.next_button['state'] = 'normal'
 
-    def stop_timer(self):
-        elapsed_time = datetime.now() - self.start_time
-        elapsed_seconds = elapsed_time.total_seconds()
+    def measure_time(self):
+        if self.camera_active:
+            elapsed_time = self.Camera.start()
+            self.cursor.execute(
+                'INSERT INTO Przejazd (czasPrzejazdu, Zawodnik_id) VALUES (?, ?)',
+                (elapsed_time, self.current_rider_id)
+            )
+            self.conn.commit()
+            self.root.after(1000, self.measure_time)
 
-        self.cursor.execute(
-            'INSERT INTO Przejazd (czasPrzejazdu, Zawodnik_id) VALUES (?, ?)',
-            (elapsed_seconds, self.current_rider_id)
-        )
-        self.conn.commit()
-
+    def next_rider(self):
         self.current_rider_id += 1
         self.update_current_rider_label()
 
-        self.timer_label.after_cancel(self.timer_after_id)
+        self.camera_active = False
+
         self.start_time = None
+
+        self.next_button['state'] = 'disabled'
 
     def update_timer_label(self):
         elapsed_time = datetime.now() - self.start_time
@@ -117,10 +124,8 @@ class RaceInterface:
 
             if rider is not None:
                 self.current_rider_label['text'] = 'Aktualny Zawodnik: ' + ' '.join(map(str, rider))
-                self.stop_button['state'] = 'normal'
             else:
                 self.current_rider_label['text'] = 'Nie ma więcej zawodników w tej kategorii.'
-                self.stop_button['state'] = 'disabled'
         else:
             self.current_rider_label['text'] = 'Nie wybrano zawodnika.'
 
