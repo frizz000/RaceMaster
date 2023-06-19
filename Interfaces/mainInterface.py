@@ -4,7 +4,7 @@ import sqlite3
 from raceInterface import RaceInterface
 from datetime import datetime
 
-conn = sqlite3.connect('../zawody.db')
+conn = sqlite3.connect('zawody.db')
 c = conn.cursor()
 
 

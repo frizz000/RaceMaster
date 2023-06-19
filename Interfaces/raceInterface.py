@@ -11,7 +11,7 @@ import cv2
 class RaceInterface:
     def __init__(self, root):
         self.root = root
-        self.conn = sqlite3.connect('../zawody.db')
+        self.conn = sqlite3.connect('zawody.db')
         self.cursor = self.conn.cursor()
         self.current_rider_id = None
         self.start_time = None
