@@ -19,7 +19,7 @@ import os
 # Camera
 cam = cv2.VideoCapture(0)
 
-pngName = "background.png"
+pngName = "../background.png"
 
 if os.path.isfile(pngName):
     os.remove(pngName)

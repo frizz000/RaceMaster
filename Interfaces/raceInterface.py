@@ -14,8 +14,8 @@ class RaceInterface:
         self.conn = sqlite3.connect('zawody.db')
         self.cursor = self.conn.cursor()
         self.current_rider_id = None
-        self.start_time = None
-        self.waiting = False
+        self.camera_active = False
+        self.stop_button_clicked = False
 
         self.category_select = ttk.Combobox(root)
         self.category_select.grid(row=0, column=0)
@@ -80,12 +80,13 @@ class RaceInterface:
             self.start_button['state'] = 'disabled'
 
     def activate_camera(self):
+        self.camera_active = True
         self.camera_thread = threading.Thread(target=self.run_camera)
         self.camera_thread.start()
 
     def run_camera(self):
         cam = cv2.VideoCapture(0)
-        pngName = "background.png"
+        pngName = "../background.png"
 
         if os.path.isfile(pngName):
             os.remove(pngName)
@@ -121,11 +122,11 @@ class RaceInterface:
 
             if countWhite >= 30 and not self.waiting:
                 print(1)
-                if self.start_time is None:
+                if not self.camera_active and not self.stop_button_clicked:
                     self.start_timer()
                     self.waiting = True
                     self.root.after(3000, self.end_waiting)
-                else:
+                elif self.camera_active and self.stop_button_clicked:
                     self.stop_timer()
 
             if cv2.waitKey(1) == ord('x'):
@@ -144,6 +145,7 @@ class RaceInterface:
         self.update_timer_label()
 
     def stop_timer(self):
+        self.camera_active = False
         elapsed_time = datetime.now() - self.start_time
         elapsed_seconds = elapsed_time.total_seconds()
 
@@ -157,7 +159,7 @@ class RaceInterface:
         self.update_current_rider_label()
 
         self.timer_label.after_cancel(self.timer_after_id)
-        self.start_time = None  # Reset start time
+        self.start_time = None
 
     def update_timer_label(self):
         elapsed_time = datetime.now() - self.start_time
