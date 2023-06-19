@@ -17,7 +17,11 @@ def home():
             GROUP BY Zawodnik.id
         ''')
     zawodnicy = c.fetchall()
+
+    zawodnicy = [(id, imie, nazwisko, dataUrodzenia, nazwa, "brak czasu" if czasy is None else czasy) for id, imie, nazwisko, dataUrodzenia, nazwa, czasy in zawodnicy]
+
     max_przejazdy = max(len(zawodnik[5].split(',')) for zawodnik in zawodnicy)
+
     return render_template('index.html', zawodnicy=zawodnicy, max_przejazdy=max_przejazdy)
 
 

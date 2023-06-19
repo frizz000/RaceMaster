@@ -20,7 +20,7 @@ class MainInterface:
 
         self.register_button = tk.Button(self.button_frame, text="Rejestracja zawodników",
                                          command=self.register_competitors)
-        self.register_button.pack(padx=100, pady=(20, 10))
+        self.register_button.pack(padx=100, pady=(10, 10))
 
         self.modify_button = tk.Button(self.button_frame, text="Modyfikacja zawodników",
                                        command=self.modify_competitors)
@@ -29,6 +29,9 @@ class MainInterface:
         self.set_category_button = tk.Button(self.button_frame, text="Zarządzanie kategoriami",
                                              command=self.set_category)
         self.set_category_button.pack(padx=100, pady=10)
+
+        self.export_button = tk.Button(self.button_frame, text="Eksportuj wyniki", command=self.export_results)
+        self.export_button.pack(padx=100, pady=10)
 
         self.start_button = tk.Button(self.button_frame, text="Start zawodów", command=self.start_competition)
         self.start_button.pack(padx=100, pady=10)
@@ -361,6 +364,35 @@ class MainInterface:
 
         for index, row in enumerate(rows, start=1):
             self.tree.insert('', 'end', values=(index,) + row)
+
+    def export_results(self):
+        conn = sqlite3.connect('../zawody.db')
+        c = conn.cursor()
+
+        c.execute("SELECT id, nazwa FROM Kategoria")
+        kategorie = c.fetchall()
+
+        with open('../wyniki.txt', 'w') as f:
+            for kategoria_id, kategoria_nazwa in kategorie:
+                f.write(f'Kategoria: {kategoria_nazwa}\n')
+
+                c.execute('''
+                    SELECT Zawodnik.id, imie, nazwisko, MIN(czasPrzejazdu)
+                    FROM Zawodnik
+                    JOIN Przejazd ON Zawodnik.id = Przejazd.Zawodnik_id
+                    WHERE Kategoria_id=?
+                    GROUP BY Zawodnik.id
+                    ORDER BY MIN(czasPrzejazdu)
+                ''', (kategoria_id,))
+
+                uczestnicy = c.fetchall()
+
+                for i, (id, imie, nazwisko, min_czas) in enumerate(uczestnicy, start=1):
+                    f.write(f'{i}. {imie} {nazwisko}: {min_czas}\n')
+
+                f.write('\n')
+
+        conn.close()
 
 
 program = MainInterface()
