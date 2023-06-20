@@ -1,12 +1,8 @@
-import os
-import threading
 import tkinter as tk
 from tkinter import ttk
 import sqlite3
-from datetime import datetime
 from MeasuringTime.cam import Camera
 
-import cv2
 
 
 class RaceInterface:
@@ -15,8 +11,9 @@ class RaceInterface:
         self.conn = sqlite3.connect('zawody.db')
         self.cursor = self.conn.cursor()
         self.current_rider_id = None
+        self.current_rider_index = None
+        self.riders = None
         self.camera_active = False
-        self.stop_button_clicked = False
 
         self.category_select = ttk.Combobox(root)
         self.category_select.grid(row=0, column=0)
@@ -72,10 +69,11 @@ class RaceInterface:
         for rider in riders:
             self.table.insert('', 'end', values=rider)
 
-        self.current_rider_id = riders[0][0] if riders else None
+        self.riders = [rider[0] for rider in riders]
+        self.current_rider_index = 0 if self.riders else None
         self.update_current_rider_label()
 
-        if riders:
+        if self.riders:
             self.start_button['state'] = 'normal'
             self.next_button['state'] = 'normal'
         else:
@@ -93,33 +91,27 @@ class RaceInterface:
             elapsed_time = self.Camera.start()
             self.cursor.execute(
                 'INSERT INTO Przejazd (czasPrzejazdu, Zawodnik_id) VALUES (?, ?)',
-                (elapsed_time, self.current_rider_id)
+                (elapsed_time, self.riders[self.current_rider_index])
             )
             self.conn.commit()
             self.root.after(1000, self.measure_time)
 
     def next_rider(self):
-        self.current_rider_id += 1
-        self.update_current_rider_label()
-
-        self.camera_active = False
-
-        self.start_time = None
-
-        self.next_button['state'] = 'disabled'
-
-    def update_timer_label(self):
-        elapsed_time = datetime.now() - self.start_time
-        self.timer_label['text'] = str(elapsed_time).split('.')[0] + '.' + str(elapsed_time).split('.')[1][:3]
-        self.timer_after_id = self.timer_label.after(1, self.update_timer_label)
+        if self.riders is not None and self.current_rider_index < len(self.riders) - 1:
+            self.current_rider_index += 1
+            self.update_current_rider_label()
+            self.camera_active = False
+            self.next_button['state'] = 'disabled'
+        else:
+            self.current_rider_label['text'] = 'Nie ma więcej zawodników w tej kategorii.'
 
     def update_current_rider_label(self):
-        if self.current_rider_id is not None:
+        if self.current_rider_index is not None:
             rider = self.cursor.execute(
                 'SELECT Zawodnik.id, imie, nazwisko, Kategoria.nazwa FROM Zawodnik '
                 'JOIN Kategoria ON Zawodnik.Kategoria_id = Kategoria.id '
                 'WHERE Zawodnik.id = ?',
-                (self.current_rider_id,)
+                (self.riders[self.current_rider_index],)
             ).fetchone()
 
             if rider is not None:
@@ -131,4 +123,3 @@ class RaceInterface:
 
     def mainloop(self):
         self.root.mainloop()
-

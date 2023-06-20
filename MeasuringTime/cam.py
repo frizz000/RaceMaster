@@ -11,6 +11,10 @@ class Camera:
     def __init__(self, sensitivity):
         self.pngName = "../background.png"
         self.sensitivity = sensitivity
+
+        # for i in range(0, 10):
+        #     print(i, " ", cv2.VideoCapture(i).isOpened())
+        #
         self.camera = cv2.VideoCapture(0)
 
     def captureBackground(self):
