@@ -32,44 +32,47 @@
 <span></span><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">render_template</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">redirect</span>
 <span class="kn">import</span> <span class="nn">sqlite3</span>
 
-<span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">,</span> <span class="n">template_folder</span><span class="o">=</span><span class="s1">&#39;../templates&#39;</span><span class="p">,</span> <span class="n">static_folder</span><span class="o">=</span><span class="s1">&#39;../static&#39;</span><span class="p">)</span>
+<div class="viewcode-block" id="RegisterWWW"><a class="viewcode-back" href="../../index.html#WWW.registerWWW.RegisterWWW">[docs]</a><span class="k">class</span> <span class="nc">RegisterWWW</span><span class="p">:</span>
+<div class="viewcode-block" id="RegisterWWW.__init__"><a class="viewcode-back" href="../../index.html#WWW.registerWWW.RegisterWWW.__init__">[docs]</a>    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">,</span> <span class="n">template_folder</span><span class="o">=</span><span class="s1">&#39;../templates&#39;</span><span class="p">,</span> <span class="n">static_folder</span><span class="o">=</span><span class="s1">&#39;../static&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">setup_routes</span><span class="p">()</span></div>
 
-<div class="viewcode-block" id="register"><a class="viewcode-back" href="../../index.html#WWW.registerWWW.register">[docs]</a><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="s1">&#39;POST&#39;</span><span class="p">])</span>
-<span class="k">def</span> <span class="nf">register</span><span class="p">():</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Metod to register new player to database</span>
-<span class="sd">    :param request:</span>
-<span class="sd">    :return:</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">&#39;../zawody.db&#39;</span><span class="p">)</span>
-    <span class="n">c</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+<div class="viewcode-block" id="RegisterWWW.setup_routes"><a class="viewcode-back" href="../../index.html#WWW.registerWWW.RegisterWWW.setup_routes">[docs]</a>    <span class="k">def</span> <span class="nf">setup_routes</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nd">@self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+        <span class="k">def</span> <span class="nf">register</span><span class="p">():</span>
+            <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">&#39;../zawody.db&#39;</span><span class="p">)</span>
+            <span class="n">c</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
 
-    <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span> <span class="o">==</span> <span class="s1">&#39;POST&#39;</span><span class="p">:</span>
-        <span class="n">imie</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;imie&#39;</span><span class="p">]</span>
-        <span class="n">nazwisko</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;nazwisko&#39;</span><span class="p">]</span>
-        <span class="n">dataUrodzenia</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;dataUrodzenia&#39;</span><span class="p">]</span>
-        <span class="n">nrTelefonu</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;nrTelefonu&#39;</span><span class="p">]</span>
-        <span class="n">daneOpiekuna</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;daneOpiekuna&#39;</span><span class="p">]</span>
-        <span class="n">pojazd</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;pojazd&#39;</span><span class="p">]</span>
-        <span class="n">Kategoria_nazwa</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;Kategoria&#39;</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span> <span class="o">==</span> <span class="s1">&#39;POST&#39;</span><span class="p">:</span>
+                <span class="n">imie</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;imie&#39;</span><span class="p">]</span>
+                <span class="n">nazwisko</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;nazwisko&#39;</span><span class="p">]</span>
+                <span class="n">dataUrodzenia</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;dataUrodzenia&#39;</span><span class="p">]</span>
+                <span class="n">nrTelefonu</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;nrTelefonu&#39;</span><span class="p">]</span>
+                <span class="n">daneOpiekuna</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;daneOpiekuna&#39;</span><span class="p">]</span>
+                <span class="n">pojazd</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;pojazd&#39;</span><span class="p">]</span>
+                <span class="n">Kategoria_nazwa</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;Kategoria&#39;</span><span class="p">]</span>
 
-        <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT id FROM Kategoria WHERE nazwa=?&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">Kategoria_nazwa</span><span class="p">,))</span>
-        <span class="n">Kategoria_id</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT id FROM Kategoria WHERE nazwa=?&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">Kategoria_nazwa</span><span class="p">,))</span>
+                <span class="n">Kategoria_id</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
 
-        <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">&#39;&#39;&#39;</span>
-<span class="s1">            INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id)</span>
-<span class="s1">            VALUES (?, ?, ?, ?, ?, ?, ?)</span>
-<span class="s1">        &#39;&#39;&#39;</span><span class="p">,</span> <span class="p">(</span><span class="n">imie</span><span class="p">,</span> <span class="n">nazwisko</span><span class="p">,</span> <span class="n">dataUrodzenia</span><span class="p">,</span> <span class="n">nrTelefonu</span><span class="p">,</span> <span class="n">daneOpiekuna</span><span class="p">,</span> <span class="n">pojazd</span><span class="p">,</span> <span class="n">Kategoria_id</span><span class="p">))</span>
-        <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+                <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">&#39;&#39;&#39;</span>
+<span class="s1">                    INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id)</span>
+<span class="s1">                    VALUES (?, ?, ?, ?, ?, ?, ?)</span>
+<span class="s1">                &#39;&#39;&#39;</span><span class="p">,</span> <span class="p">(</span><span class="n">imie</span><span class="p">,</span> <span class="n">nazwisko</span><span class="p">,</span> <span class="n">dataUrodzenia</span><span class="p">,</span> <span class="n">nrTelefonu</span><span class="p">,</span> <span class="n">daneOpiekuna</span><span class="p">,</span> <span class="n">pojazd</span><span class="p">,</span> <span class="n">Kategoria_id</span><span class="p">))</span>
+                <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
 
-        <span class="k">return</span> <span class="n">redirect</span><span class="p">(</span><span class="s1">&#39;https://www.youtube.com/watch?v=dQw4w9WgXcQ&#39;</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT nazwa FROM Kategoria&quot;</span><span class="p">)</span>
-        <span class="n">kategorie</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()]</span>
-        <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s1">&#39;register.html&#39;</span><span class="p">,</span> <span class="n">kategorie</span><span class="o">=</span><span class="n">kategorie</span><span class="p">)</span></div>
+                <span class="k">return</span> <span class="n">redirect</span><span class="p">(</span><span class="s1">&#39;https://www.youtube.com/watch?v=dQw4w9WgXcQ&#39;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT nazwa FROM Kategoria&quot;</span><span class="p">)</span>
+                <span class="n">kategorie</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()]</span>
+                <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s1">&#39;register.html&#39;</span><span class="p">,</span> <span class="n">kategorie</span><span class="o">=</span><span class="n">kategorie</span><span class="p">)</span></div>
+
+<div class="viewcode-block" id="RegisterWWW.run"><a class="viewcode-back" href="../../index.html#WWW.registerWWW.RegisterWWW.run">[docs]</a>    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></div></div>
 
 <span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
-    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">my_app</span> <span class="o">=</span> <span class="n">RegisterWWW</span><span class="p">()</span>
+    <span class="n">my_app</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
 </pre></div>
 
           </div>

@@ -32,36 +32,38 @@
 <span></span><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">render_template</span>
 <span class="kn">import</span> <span class="nn">sqlite3</span>
 
-<span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">,</span> <span class="n">template_folder</span><span class="o">=</span><span class="s1">&#39;../templates&#39;</span><span class="p">,</span> <span class="n">static_folder</span><span class="o">=</span><span class="s1">&#39;../static&#39;</span><span class="p">)</span>
+<div class="viewcode-block" id="TableWWW"><a class="viewcode-back" href="../../index.html#WWW.tableWWW.TableWWW">[docs]</a><span class="k">class</span> <span class="nc">TableWWW</span><span class="p">:</span>
+<div class="viewcode-block" id="TableWWW.__init__"><a class="viewcode-back" href="../../index.html#WWW.tableWWW.TableWWW.__init__">[docs]</a>    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">,</span> <span class="n">template_folder</span><span class="o">=</span><span class="s1">&#39;../templates&#39;</span><span class="p">,</span> <span class="n">static_folder</span><span class="o">=</span><span class="s1">&#39;../static&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">setup_routes</span><span class="p">()</span></div>
 
+<div class="viewcode-block" id="TableWWW.setup_routes"><a class="viewcode-back" href="../../index.html#WWW.tableWWW.TableWWW.setup_routes">[docs]</a>    <span class="k">def</span> <span class="nf">setup_routes</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nd">@self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">)</span>
+        <span class="k">def</span> <span class="nf">home</span><span class="p">():</span>
+            <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">&#39;../zawody.db&#39;</span><span class="p">)</span>
+            <span class="n">c</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
 
-<div class="viewcode-block" id="home"><a class="viewcode-back" href="../../index.html#WWW.tableWWW.home">[docs]</a><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">)</span>
-<span class="k">def</span> <span class="nf">home</span><span class="p">():</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Method to show table with all players</span>
-<span class="sd">    :return:</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">&#39;../zawody.db&#39;</span><span class="p">)</span>
-    <span class="n">c</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+            <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">&#39;&#39;&#39;</span>
+<span class="s1">                    SELECT Zawodnik.id, imie, nazwisko, dataUrodzenia, Kategoria.nazwa, GROUP_CONCAT(Przejazd.czasPrzejazdu)</span>
+<span class="s1">                    FROM Zawodnik</span>
+<span class="s1">                    JOIN Kategoria ON Zawodnik.Kategoria_id = Kategoria.id</span>
+<span class="s1">                    LEFT JOIN Przejazd ON Zawodnik.id = Przejazd.Zawodnik_id</span>
+<span class="s1">                    GROUP BY Zawodnik.id</span>
+<span class="s1">                &#39;&#39;&#39;</span><span class="p">)</span>
+            <span class="n">zawodnicy</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
 
-    <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">&#39;&#39;&#39;</span>
-<span class="s1">            SELECT Zawodnik.id, imie, nazwisko, dataUrodzenia, Kategoria.nazwa, GROUP_CONCAT(Przejazd.czasPrzejazdu)</span>
-<span class="s1">            FROM Zawodnik</span>
-<span class="s1">            JOIN Kategoria ON Zawodnik.Kategoria_id = Kategoria.id</span>
-<span class="s1">            LEFT JOIN Przejazd ON Zawodnik.id = Przejazd.Zawodnik_id</span>
-<span class="s1">            GROUP BY Zawodnik.id</span>
-<span class="s1">        &#39;&#39;&#39;</span><span class="p">)</span>
-    <span class="n">zawodnicy</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+            <span class="n">zawodnicy</span> <span class="o">=</span> <span class="p">[(</span><span class="nb">id</span><span class="p">,</span> <span class="n">imie</span><span class="p">,</span> <span class="n">nazwisko</span><span class="p">,</span> <span class="n">dataUrodzenia</span><span class="p">,</span> <span class="n">nazwa</span><span class="p">,</span> <span class="s2">&quot;brak czasu&quot;</span> <span class="k">if</span> <span class="n">czasy</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">czasy</span><span class="p">)</span> <span class="k">for</span> <span class="nb">id</span><span class="p">,</span> <span class="n">imie</span><span class="p">,</span> <span class="n">nazwisko</span><span class="p">,</span> <span class="n">dataUrodzenia</span><span class="p">,</span> <span class="n">nazwa</span><span class="p">,</span> <span class="n">czasy</span> <span class="ow">in</span> <span class="n">zawodnicy</span><span class="p">]</span>
 
-    <span class="n">zawodnicy</span> <span class="o">=</span> <span class="p">[(</span><span class="nb">id</span><span class="p">,</span> <span class="n">imie</span><span class="p">,</span> <span class="n">nazwisko</span><span class="p">,</span> <span class="n">dataUrodzenia</span><span class="p">,</span> <span class="n">nazwa</span><span class="p">,</span> <span class="s2">&quot;brak czasu&quot;</span> <span class="k">if</span> <span class="n">czasy</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">czasy</span><span class="p">)</span> <span class="k">for</span> <span class="nb">id</span><span class="p">,</span> <span class="n">imie</span><span class="p">,</span> <span class="n">nazwisko</span><span class="p">,</span> <span class="n">dataUrodzenia</span><span class="p">,</span> <span class="n">nazwa</span><span class="p">,</span> <span class="n">czasy</span> <span class="ow">in</span> <span class="n">zawodnicy</span><span class="p">]</span>
+            <span class="n">max_przejazdy</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">zawodnik</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">))</span> <span class="k">for</span> <span class="n">zawodnik</span> <span class="ow">in</span> <span class="n">zawodnicy</span><span class="p">)</span>
 
-    <span class="n">max_przejazdy</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">zawodnik</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">))</span> <span class="k">for</span> <span class="n">zawodnik</span> <span class="ow">in</span> <span class="n">zawodnicy</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s1">&#39;index.html&#39;</span><span class="p">,</span> <span class="n">zawodnicy</span><span class="o">=</span><span class="n">zawodnicy</span><span class="p">,</span> <span class="n">max_przejazdy</span><span class="o">=</span><span class="n">max_przejazdy</span><span class="p">)</span></div>
 
-    <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s1">&#39;index.html&#39;</span><span class="p">,</span> <span class="n">zawodnicy</span><span class="o">=</span><span class="n">zawodnicy</span><span class="p">,</span> <span class="n">max_przejazdy</span><span class="o">=</span><span class="n">max_przejazdy</span><span class="p">)</span></div>
-
+<div class="viewcode-block" id="TableWWW.run"><a class="viewcode-back" href="../../index.html#WWW.tableWWW.TableWWW.run">[docs]</a>    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></div></div>
 
 <span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
-    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">my_app</span> <span class="o">=</span> <span class="n">TableWWW</span><span class="p">()</span>
+    <span class="n">my_app</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
 </pre></div>
 
           </div>
