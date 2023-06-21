@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>werkzeug.exceptions &#8212; RaceMaster 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/sphinx_highlight.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for werkzeug.exceptions</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Implements a number of Python exceptions which can be raised from within</span>
+<span class="sd">a view to trigger a standard HTTP non-200 response.</span>
+
+<span class="sd">Usage Example</span>
+<span class="sd">-------------</span>
+
+<span class="sd">.. code-block:: python</span>
+
+<span class="sd">    from werkzeug.wrappers.request import Request</span>
+<span class="sd">    from werkzeug.exceptions import HTTPException, NotFound</span>
+
+<span class="sd">    def view(request):</span>
+<span class="sd">        raise NotFound()</span>
+
+<span class="sd">    @Request.application</span>
+<span class="sd">    def application(request):</span>
+<span class="sd">        try:</span>
+<span class="sd">            return view(request)</span>
+<span class="sd">        except HTTPException as e:</span>
+<span class="sd">            return e</span>
+
+<span class="sd">As you can see from this example those exceptions are callable WSGI</span>
+<span class="sd">applications. However, they are not Werkzeug response objects. You</span>
+<span class="sd">can get a response object by calling ``get_response()`` on a HTTP</span>
+<span class="sd">exception.</span>
+
+<span class="sd">Keep in mind that you may have to pass an environ (WSGI) or scope</span>
+<span class="sd">(ASGI) to ``get_response()`` because some errors fetch additional</span>
+<span class="sd">information relating to the request.</span>
+
+<span class="sd">If you want to hook in a different exception page to say, a 404 status</span>
+<span class="sd">code, you can add a second except for a specific subclass of an error:</span>
+
+<span class="sd">.. code-block:: python</span>
+
+<span class="sd">    @Request.application</span>
+<span class="sd">    def application(request):</span>
+<span class="sd">        try:</span>
+<span class="sd">            return view(request)</span>
+<span class="sd">        except NotFound as e:</span>
+<span class="sd">            return not_found(request)</span>
+<span class="sd">        except HTTPException as e:</span>
+<span class="sd">            return e</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">typing</span> <span class="k">as</span> <span class="nn">t</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="kn">from</span> <span class="nn">markupsafe</span> <span class="kn">import</span> <span class="n">escape</span>
+<span class="kn">from</span> <span class="nn">markupsafe</span> <span class="kn">import</span> <span class="n">Markup</span>
+
+<span class="kn">from</span> <span class="nn">._internal</span> <span class="kn">import</span> <span class="n">_get_environ</span>
+
+<span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">import</span> <span class="nn">typing_extensions</span> <span class="k">as</span> <span class="nn">te</span>
+    <span class="kn">from</span> <span class="nn">_typeshed.wsgi</span> <span class="kn">import</span> <span class="n">StartResponse</span>
+    <span class="kn">from</span> <span class="nn">_typeshed.wsgi</span> <span class="kn">import</span> <span class="n">WSGIEnvironment</span>
+    <span class="kn">from</span> <span class="nn">.datastructures</span> <span class="kn">import</span> <span class="n">WWWAuthenticate</span>
+    <span class="kn">from</span> <span class="nn">.sansio.response</span> <span class="kn">import</span> <span class="n">Response</span>
+    <span class="kn">from</span> <span class="nn">.wrappers.request</span> <span class="kn">import</span> <span class="n">Request</span> <span class="k">as</span> <span class="n">WSGIRequest</span>  <span class="c1"># noqa: F401</span>
+    <span class="kn">from</span> <span class="nn">.wrappers.response</span> <span class="kn">import</span> <span class="n">Response</span> <span class="k">as</span> <span class="n">WSGIResponse</span>  <span class="c1"># noqa: F401</span>
+
+
+<span class="k">class</span> <span class="nc">HTTPException</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The base class for all HTTP exceptions. This exception can be called as a WSGI</span>
+<span class="sd">    application to render a default error page or you can catch the subclasses</span>
+<span class="sd">    of it independently and render nicer error messages.</span>
+
+<span class="sd">    .. versionchanged:: 2.1</span>
+<span class="sd">        Removed the ``wrap`` class method.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">description</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">description</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">response</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;Response&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">description</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="n">description</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">response</span> <span class="o">=</span> <span class="n">response</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The status name.&quot;&quot;&quot;</span>
+        <span class="kn">from</span> <span class="nn">.http</span> <span class="kn">import</span> <span class="n">HTTP_STATUS_CODES</span>
+
+        <span class="k">return</span> <span class="n">HTTP_STATUS_CODES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">code</span><span class="p">,</span> <span class="s2">&quot;Unknown Error&quot;</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+
+    <span class="k">def</span> <span class="nf">get_description</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scope</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the description.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">description</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="k">elif</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">description</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="n">description</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">description</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">description</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">description</span>
+
+        <span class="n">description</span> <span class="o">=</span> <span class="n">escape</span><span class="p">(</span><span class="n">description</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">Markup</span><span class="p">(</span><span class="s2">&quot;&lt;br&gt;&quot;</span><span class="p">))</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;p&gt;</span><span class="si">{</span><span class="n">description</span><span class="si">}</span><span class="s2">&lt;/p&gt;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">get_body</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scope</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the HTML body.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="s2">&quot;&lt;!doctype html&gt;</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;&lt;html lang=en&gt;</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;&lt;title&gt;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">code</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">escape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">)</span><span class="si">}</span><span class="s2">&lt;/title&gt;</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;&lt;h1&gt;</span><span class="si">{</span><span class="n">escape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">)</span><span class="si">}</span><span class="s2">&lt;/h1&gt;</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">get_description</span><span class="p">(</span><span class="n">environ</span><span class="p">)</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get_headers</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scope</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get a list of headers.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[(</span><span class="s2">&quot;Content-Type&quot;</span><span class="p">,</span> <span class="s2">&quot;text/html; charset=utf-8&quot;</span><span class="p">)]</span>
+
+    <span class="k">def</span> <span class="nf">get_response</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">,</span> <span class="s2">&quot;WSGIRequest&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scope</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Response&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get a response object.  If one was passed to the exception</span>
+<span class="sd">        it&#39;s returned directly.</span>
+
+<span class="sd">        :param environ: the optional environ for the request.  This</span>
+<span class="sd">                        can be used to modify the response depending</span>
+<span class="sd">                        on how the request looked like.</span>
+<span class="sd">        :return: a :class:`Response` object or a subclass thereof.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">from</span> <span class="nn">.wrappers.response</span> <span class="kn">import</span> <span class="n">Response</span> <span class="k">as</span> <span class="n">WSGIResponse</span>  <span class="c1"># noqa: F811</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">response</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">response</span>
+        <span class="k">if</span> <span class="n">environ</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">environ</span> <span class="o">=</span> <span class="n">_get_environ</span><span class="p">(</span><span class="n">environ</span><span class="p">)</span>
+        <span class="n">headers</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_headers</span><span class="p">(</span><span class="n">environ</span><span class="p">,</span> <span class="n">scope</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">WSGIResponse</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">get_body</span><span class="p">(</span><span class="n">environ</span><span class="p">,</span> <span class="n">scope</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">code</span><span class="p">,</span> <span class="n">headers</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">environ</span><span class="p">:</span> <span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">,</span> <span class="n">start_response</span><span class="p">:</span> <span class="s2">&quot;StartResponse&quot;</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="nb">bytes</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Call the exception as WSGI application.</span>
+
+<span class="sd">        :param environ: the WSGI environment.</span>
+<span class="sd">        :param start_response: the response callable provided by the WSGI</span>
+<span class="sd">                               server.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="s2">&quot;WSGIResponse&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_response</span><span class="p">(</span><span class="n">environ</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">response</span><span class="p">(</span><span class="n">environ</span><span class="p">,</span> <span class="n">start_response</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">code</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">code</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">code</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;???&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">code</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">description</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">code</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">code</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">code</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;???&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> &#39;</span><span class="si">{</span><span class="n">code</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;&gt;&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">BadRequest</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*400* `Bad Request`</span>
+
+<span class="sd">    Raise if the browser sends something to the application the application</span>
+<span class="sd">    or server cannot handle.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">400</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The browser (or proxy) sent a request that this server could &quot;</span>
+        <span class="s2">&quot;not understand.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">BadRequestKeyError</span><span class="p">(</span><span class="n">BadRequest</span><span class="p">,</span> <span class="ne">KeyError</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;An exception that is used to signal both a :exc:`KeyError` and a</span>
+<span class="sd">    :exc:`BadRequest`. Used by many of the datastructures.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">_description</span> <span class="o">=</span> <span class="n">BadRequest</span><span class="o">.</span><span class="n">description</span>
+    <span class="c1">#: Show the KeyError along with the HTTP error message in the</span>
+    <span class="c1">#: response. This should be disabled in production, but can be</span>
+    <span class="c1">#: useful in a debug mode.</span>
+    <span class="n">show_exception</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">arg</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="ne">KeyError</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="ne">KeyError</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg</span><span class="p">)</span>
+
+    <span class="nd">@property</span>  <span class="c1"># type: ignore</span>
+    <span class="k">def</span> <span class="nf">description</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">show_exception</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_description</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="ne">KeyError</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="ne">KeyError</span><span class="o">.</span><span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_description</span>
+
+    <span class="nd">@description</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span> <span class="nf">description</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_description</span> <span class="o">=</span> <span class="n">value</span>
+
+
+<span class="k">class</span> <span class="nc">ClientDisconnected</span><span class="p">(</span><span class="n">BadRequest</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Internal exception that is raised if Werkzeug detects a disconnected</span>
+<span class="sd">    client.  Since the client is already gone at that point attempting to</span>
+<span class="sd">    send the error message to the client might not work and might ultimately</span>
+<span class="sd">    result in another exception in the server.  Mainly this is here so that</span>
+<span class="sd">    it is silenced by default as far as Werkzeug is concerned.</span>
+
+<span class="sd">    Since disconnections cannot be reliably detected and are unspecified</span>
+<span class="sd">    by WSGI to a large extent this might or might not be raised if a client</span>
+<span class="sd">    is gone.</span>
+
+<span class="sd">    .. versionadded:: 0.8</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">SecurityError</span><span class="p">(</span><span class="n">BadRequest</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised if something triggers a security error.  This is otherwise</span>
+<span class="sd">    exactly like a bad request error.</span>
+
+<span class="sd">    .. versionadded:: 0.9</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">BadHost</span><span class="p">(</span><span class="n">BadRequest</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised if the submitted host is badly formatted.</span>
+
+<span class="sd">    .. versionadded:: 0.11.2</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">Unauthorized</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*401* ``Unauthorized``</span>
+
+<span class="sd">    Raise if the user is not authorized to access a resource.</span>
+
+<span class="sd">    The ``www_authenticate`` argument should be used to set the</span>
+<span class="sd">    ``WWW-Authenticate`` header. This is used for HTTP basic auth and</span>
+<span class="sd">    other schemes. Use :class:`~werkzeug.datastructures.WWWAuthenticate`</span>
+<span class="sd">    to create correctly formatted values. Strictly speaking a 401</span>
+<span class="sd">    response is invalid if it doesn&#39;t provide at least one value for</span>
+<span class="sd">    this header, although real clients typically don&#39;t care.</span>
+
+<span class="sd">    :param description: Override the default message used for the body</span>
+<span class="sd">        of the response.</span>
+<span class="sd">    :param www-authenticate: A single value, or list of values, for the</span>
+<span class="sd">        WWW-Authenticate header(s).</span>
+
+<span class="sd">    .. versionchanged:: 2.0</span>
+<span class="sd">        Serialize multiple ``www_authenticate`` items into multiple</span>
+<span class="sd">        ``WWW-Authenticate`` headers, rather than joining them</span>
+<span class="sd">        into a single value, for better interoperability.</span>
+
+<span class="sd">    .. versionchanged:: 0.15.3</span>
+<span class="sd">        If the ``www_authenticate`` argument is not set, the</span>
+<span class="sd">        ``WWW-Authenticate`` header is not set.</span>
+
+<span class="sd">    .. versionchanged:: 0.15.3</span>
+<span class="sd">        The ``response`` argument was restored.</span>
+
+<span class="sd">    .. versionchanged:: 0.15.1</span>
+<span class="sd">        ``description`` was moved back as the first argument, restoring</span>
+<span class="sd">         its previous position.</span>
+
+<span class="sd">    .. versionchanged:: 0.15.0</span>
+<span class="sd">        ``www_authenticate`` was added as the first argument, ahead of</span>
+<span class="sd">        ``description``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">401</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The server could not verify that you are authorized to access&quot;</span>
+        <span class="s2">&quot; the URL requested. You either supplied the wrong credentials&quot;</span>
+        <span class="s2">&quot; (e.g. a bad password), or your browser doesn&#39;t understand&quot;</span>
+        <span class="s2">&quot; how to supply the credentials required.&quot;</span>
+    <span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">description</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">response</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;Response&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">www_authenticate</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span>
+            <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="s2">&quot;WWWAuthenticate&quot;</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="s2">&quot;WWWAuthenticate&quot;</span><span class="p">]]</span>
+        <span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">description</span><span class="p">,</span> <span class="n">response</span><span class="p">)</span>
+
+        <span class="kn">from</span> <span class="nn">.datastructures</span> <span class="kn">import</span> <span class="n">WWWAuthenticate</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">www_authenticate</span><span class="p">,</span> <span class="n">WWWAuthenticate</span><span class="p">):</span>
+            <span class="n">www_authenticate</span> <span class="o">=</span> <span class="p">(</span><span class="n">www_authenticate</span><span class="p">,)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">www_authenticate</span> <span class="o">=</span> <span class="n">www_authenticate</span>
+
+    <span class="k">def</span> <span class="nf">get_headers</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scope</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+        <span class="n">headers</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">get_headers</span><span class="p">(</span><span class="n">environ</span><span class="p">,</span> <span class="n">scope</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">www_authenticate</span><span class="p">:</span>
+            <span class="n">headers</span><span class="o">.</span><span class="n">extend</span><span class="p">((</span><span class="s2">&quot;WWW-Authenticate&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">x</span><span class="p">))</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">www_authenticate</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">headers</span>
+
+
+<span class="k">class</span> <span class="nc">Forbidden</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*403* `Forbidden`</span>
+
+<span class="sd">    Raise if the user doesn&#39;t have the permission for the requested resource</span>
+<span class="sd">    but was authenticated.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">403</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;You don&#39;t have the permission to access the requested&quot;</span>
+        <span class="s2">&quot; resource. It is either read-protected or not readable by the&quot;</span>
+        <span class="s2">&quot; server.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">NotFound</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*404* `Not Found`</span>
+
+<span class="sd">    Raise if a resource does not exist and never existed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">404</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The requested URL was not found on the server. If you entered&quot;</span>
+        <span class="s2">&quot; the URL manually please check your spelling and try again.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">MethodNotAllowed</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*405* `Method Not Allowed`</span>
+
+<span class="sd">    Raise if the server used a method the resource does not handle.  For</span>
+<span class="sd">    example `POST` if the resource is view only.  Especially useful for REST.</span>
+
+<span class="sd">    The first argument for this exception should be a list of allowed methods.</span>
+<span class="sd">    Strictly speaking the response would be invalid if you don&#39;t provide valid</span>
+<span class="sd">    methods in the header which you can do with that list.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">405</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;The method is not allowed for the requested URL.&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">valid_methods</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">description</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">response</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;Response&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Takes an optional list of valid http methods</span>
+<span class="sd">        starting with werkzeug 0.3 the list will be mandatory.&quot;&quot;&quot;</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="n">description</span><span class="p">,</span> <span class="n">response</span><span class="o">=</span><span class="n">response</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">valid_methods</span> <span class="o">=</span> <span class="n">valid_methods</span>
+
+    <span class="k">def</span> <span class="nf">get_headers</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scope</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+        <span class="n">headers</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">get_headers</span><span class="p">(</span><span class="n">environ</span><span class="p">,</span> <span class="n">scope</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">valid_methods</span><span class="p">:</span>
+            <span class="n">headers</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;Allow&quot;</span><span class="p">,</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">valid_methods</span><span class="p">)))</span>
+        <span class="k">return</span> <span class="n">headers</span>
+
+
+<span class="k">class</span> <span class="nc">NotAcceptable</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*406* `Not Acceptable`</span>
+
+<span class="sd">    Raise if the server can&#39;t return any content conforming to the</span>
+<span class="sd">    `Accept` headers of the client.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">406</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The resource identified by the request is only capable of&quot;</span>
+        <span class="s2">&quot; generating response entities which have content&quot;</span>
+        <span class="s2">&quot; characteristics not acceptable according to the accept&quot;</span>
+        <span class="s2">&quot; headers sent in the request.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">RequestTimeout</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*408* `Request Timeout`</span>
+
+<span class="sd">    Raise to signalize a timeout.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">408</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The server closed the network connection because the browser&quot;</span>
+        <span class="s2">&quot; didn&#39;t finish the request within the specified time.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">Conflict</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*409* `Conflict`</span>
+
+<span class="sd">    Raise to signal that a request cannot be completed because it conflicts</span>
+<span class="sd">    with the current state on the server.</span>
+
+<span class="sd">    .. versionadded:: 0.7</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">409</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;A conflict happened while processing the request. The&quot;</span>
+        <span class="s2">&quot; resource might have been modified while the request was being&quot;</span>
+        <span class="s2">&quot; processed.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">Gone</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*410* `Gone`</span>
+
+<span class="sd">    Raise if a resource existed previously and went away without new location.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">410</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The requested URL is no longer available on this server and&quot;</span>
+        <span class="s2">&quot; there is no forwarding address. If you followed a link from a&quot;</span>
+        <span class="s2">&quot; foreign page, please contact the author of this page.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">LengthRequired</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*411* `Length Required`</span>
+
+<span class="sd">    Raise if the browser submitted data but no ``Content-Length`` header which</span>
+<span class="sd">    is required for the kind of processing the server does.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">411</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;A request with this method requires a valid &lt;code&gt;Content-&quot;</span>
+        <span class="s2">&quot;Length&lt;/code&gt; header.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">PreconditionFailed</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*412* `Precondition Failed`</span>
+
+<span class="sd">    Status code used in combination with ``If-Match``, ``If-None-Match``, or</span>
+<span class="sd">    ``If-Unmodified-Since``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">412</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The precondition on the request for the URL failed positive evaluation.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">RequestEntityTooLarge</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*413* `Request Entity Too Large`</span>
+
+<span class="sd">    The status code one should return if the data submitted exceeded a given</span>
+<span class="sd">    limit.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">413</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;The data value transmitted exceeds the capacity limit.&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">RequestURITooLarge</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*414* `Request URI Too Large`</span>
+
+<span class="sd">    Like *413* but for too long URLs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">414</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The length of the requested URL exceeds the capacity limit for&quot;</span>
+        <span class="s2">&quot; this server. The request cannot be processed.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">UnsupportedMediaType</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*415* `Unsupported Media Type`</span>
+
+<span class="sd">    The status code returned if the server is unable to handle the media type</span>
+<span class="sd">    the client transmitted.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">415</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The server does not support the media type transmitted in the request.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">RequestedRangeNotSatisfiable</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*416* `Requested Range Not Satisfiable`</span>
+
+<span class="sd">    The client asked for an invalid part of the file.</span>
+
+<span class="sd">    .. versionadded:: 0.7</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">416</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;The server cannot provide the requested range.&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">length</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">units</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;bytes&quot;</span><span class="p">,</span>
+        <span class="n">description</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">response</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;Response&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Takes an optional `Content-Range` header value based on ``length``</span>
+<span class="sd">        parameter.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="n">description</span><span class="p">,</span> <span class="n">response</span><span class="o">=</span><span class="n">response</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">length</span> <span class="o">=</span> <span class="n">length</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">units</span> <span class="o">=</span> <span class="n">units</span>
+
+    <span class="k">def</span> <span class="nf">get_headers</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scope</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+        <span class="n">headers</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">get_headers</span><span class="p">(</span><span class="n">environ</span><span class="p">,</span> <span class="n">scope</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">length</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">headers</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;Content-Range&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">units</span><span class="si">}</span><span class="s2"> */</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">length</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">headers</span>
+
+
+<span class="k">class</span> <span class="nc">ExpectationFailed</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*417* `Expectation Failed`</span>
+
+<span class="sd">    The server cannot meet the requirements of the Expect request-header.</span>
+
+<span class="sd">    .. versionadded:: 0.7</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">417</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;The server could not meet the requirements of the Expect header&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">ImATeapot</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*418* `I&#39;m a teapot`</span>
+
+<span class="sd">    The server should return this if it is a teapot and someone attempted</span>
+<span class="sd">    to brew coffee with it.</span>
+
+<span class="sd">    .. versionadded:: 0.7</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">418</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;This server is a teapot, not a coffee machine&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">UnprocessableEntity</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*422* `Unprocessable Entity`</span>
+
+<span class="sd">    Used if the request is well formed, but the instructions are otherwise</span>
+<span class="sd">    incorrect.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">422</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The request was well-formed but was unable to be followed due&quot;</span>
+        <span class="s2">&quot; to semantic errors.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">Locked</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*423* `Locked`</span>
+
+<span class="sd">    Used if the resource that is being accessed is locked.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">423</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;The resource that is being accessed is locked.&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">FailedDependency</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*424* `Failed Dependency`</span>
+
+<span class="sd">    Used if the method could not be performed on the resource</span>
+<span class="sd">    because the requested action depended on another action and that action failed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">424</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The method could not be performed on the resource because the&quot;</span>
+        <span class="s2">&quot; requested action depended on another action and that action&quot;</span>
+        <span class="s2">&quot; failed.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">PreconditionRequired</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*428* `Precondition Required`</span>
+
+<span class="sd">    The server requires this request to be conditional, typically to prevent</span>
+<span class="sd">    the lost update problem, which is a race condition between two or more</span>
+<span class="sd">    clients attempting to update a resource through PUT or DELETE. By requiring</span>
+<span class="sd">    each client to include a conditional header (&quot;If-Match&quot; or &quot;If-Unmodified-</span>
+<span class="sd">    Since&quot;) with the proper value retained from a recent GET request, the</span>
+<span class="sd">    server ensures that each client has at least seen the previous revision of</span>
+<span class="sd">    the resource.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">428</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;This request is required to be conditional; try using&quot;</span>
+        <span class="s1">&#39; &quot;If-Match&quot; or &quot;If-Unmodified-Since&quot;.&#39;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">_RetryAfter</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Adds an optional ``retry_after`` parameter which will set the</span>
+<span class="sd">    ``Retry-After`` header. May be an :class:`int` number of seconds or</span>
+<span class="sd">    a :class:`~datetime.datetime`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">description</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">response</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;Response&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">retry_after</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="n">datetime</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">description</span><span class="p">,</span> <span class="n">response</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">retry_after</span> <span class="o">=</span> <span class="n">retry_after</span>
+
+    <span class="k">def</span> <span class="nf">get_headers</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;WSGIEnvironment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scope</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+        <span class="n">headers</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">get_headers</span><span class="p">(</span><span class="n">environ</span><span class="p">,</span> <span class="n">scope</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">retry_after</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">retry_after</span><span class="p">,</span> <span class="n">datetime</span><span class="p">):</span>
+                <span class="kn">from</span> <span class="nn">.http</span> <span class="kn">import</span> <span class="n">http_date</span>
+
+                <span class="n">value</span> <span class="o">=</span> <span class="n">http_date</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">retry_after</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">retry_after</span><span class="p">)</span>
+
+            <span class="n">headers</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;Retry-After&quot;</span><span class="p">,</span> <span class="n">value</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">headers</span>
+
+
+<span class="k">class</span> <span class="nc">TooManyRequests</span><span class="p">(</span><span class="n">_RetryAfter</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*429* `Too Many Requests`</span>
+
+<span class="sd">    The server is limiting the rate at which this user receives</span>
+<span class="sd">    responses, and this request exceeds that rate. (The server may use</span>
+<span class="sd">    any convenient method to identify users and their request rates).</span>
+<span class="sd">    The server may include a &quot;Retry-After&quot; header to indicate how long</span>
+<span class="sd">    the user should wait before retrying.</span>
+
+<span class="sd">    :param retry_after: If given, set the ``Retry-After`` header to this</span>
+<span class="sd">        value. May be an :class:`int` number of seconds or a</span>
+<span class="sd">        :class:`~datetime.datetime`.</span>
+
+<span class="sd">    .. versionchanged:: 1.0</span>
+<span class="sd">        Added ``retry_after`` parameter.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">429</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;This user has exceeded an allotted request count. Try again later.&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">RequestHeaderFieldsTooLarge</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*431* `Request Header Fields Too Large`</span>
+
+<span class="sd">    The server refuses to process the request because the header fields are too</span>
+<span class="sd">    large. One or more individual fields may be too large, or the set of all</span>
+<span class="sd">    headers is too large.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">431</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;One or more header fields exceeds the maximum size.&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">UnavailableForLegalReasons</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*451* `Unavailable For Legal Reasons`</span>
+
+<span class="sd">    This status code indicates that the server is denying access to the</span>
+<span class="sd">    resource as a consequence of a legal demand.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">451</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;Unavailable for legal reasons.&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">InternalServerError</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*500* `Internal Server Error`</span>
+
+<span class="sd">    Raise if an internal server error occurred.  This is a good fallback if an</span>
+<span class="sd">    unknown error occurred in the dispatcher.</span>
+
+<span class="sd">    .. versionchanged:: 1.0.0</span>
+<span class="sd">        Added the :attr:`original_exception` attribute.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">500</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The server encountered an internal error and was unable to&quot;</span>
+        <span class="s2">&quot; complete your request. Either the server is overloaded or&quot;</span>
+        <span class="s2">&quot; there is an error in the application.&quot;</span>
+    <span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">description</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">response</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;Response&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">original_exception</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="ne">BaseException</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1">#: The original exception that caused this 500 error. Can be</span>
+        <span class="c1">#: used by frameworks to provide context when handling</span>
+        <span class="c1">#: unexpected errors.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">original_exception</span> <span class="o">=</span> <span class="n">original_exception</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="n">description</span><span class="p">,</span> <span class="n">response</span><span class="o">=</span><span class="n">response</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">NotImplemented</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*501* `Not Implemented`</span>
+
+<span class="sd">    Raise if the application does not support the action requested by the</span>
+<span class="sd">    browser.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">501</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;The server does not support the action requested by the browser.&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">BadGateway</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*502* `Bad Gateway`</span>
+
+<span class="sd">    If you do proxying in your application you should return this status code</span>
+<span class="sd">    if you received an invalid response from the upstream server it accessed</span>
+<span class="sd">    in attempting to fulfill the request.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">502</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The proxy server received an invalid response from an upstream server.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">ServiceUnavailable</span><span class="p">(</span><span class="n">_RetryAfter</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*503* `Service Unavailable`</span>
+
+<span class="sd">    Status code you should return if a service is temporarily</span>
+<span class="sd">    unavailable.</span>
+
+<span class="sd">    :param retry_after: If given, set the ``Retry-After`` header to this</span>
+<span class="sd">        value. May be an :class:`int` number of seconds or a</span>
+<span class="sd">        :class:`~datetime.datetime`.</span>
+
+<span class="sd">    .. versionchanged:: 1.0</span>
+<span class="sd">        Added ``retry_after`` parameter.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">503</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The server is temporarily unable to service your request due&quot;</span>
+        <span class="s2">&quot; to maintenance downtime or capacity problems. Please try&quot;</span>
+        <span class="s2">&quot; again later.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">GatewayTimeout</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*504* `Gateway Timeout`</span>
+
+<span class="sd">    Status code you should return if a connection to an upstream server</span>
+<span class="sd">    times out.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">504</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;The connection to an upstream server timed out.&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">HTTPVersionNotSupported</span><span class="p">(</span><span class="n">HTTPException</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;*505* `HTTP Version Not Supported`</span>
+
+<span class="sd">    The server does not support the HTTP protocol version used in the request.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">code</span> <span class="o">=</span> <span class="mi">505</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;The server does not support the HTTP protocol version used in the request.&quot;</span>
+    <span class="p">)</span>
+
+
+<span class="n">default_exceptions</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Type</span><span class="p">[</span><span class="n">HTTPException</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+
+
+<span class="k">def</span> <span class="nf">_find_exceptions</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">obj</span> <span class="ow">in</span> <span class="nb">globals</span><span class="p">()</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">is_http_exception</span> <span class="o">=</span> <span class="nb">issubclass</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">HTTPException</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>
+            <span class="n">is_http_exception</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">is_http_exception</span> <span class="ow">or</span> <span class="n">obj</span><span class="o">.</span><span class="n">code</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">old_obj</span> <span class="o">=</span> <span class="n">default_exceptions</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">code</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">old_obj</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">issubclass</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">old_obj</span><span class="p">):</span>
+            <span class="k">continue</span>
+        <span class="n">default_exceptions</span><span class="p">[</span><span class="n">obj</span><span class="o">.</span><span class="n">code</span><span class="p">]</span> <span class="o">=</span> <span class="n">obj</span>
+
+
+<span class="n">_find_exceptions</span><span class="p">()</span>
+<span class="k">del</span> <span class="n">_find_exceptions</span>
+
+
+<span class="k">class</span> <span class="nc">Aborter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;When passed a dict of code -&gt; exception items it can be used as</span>
+<span class="sd">    callable that raises exceptions.  If the first argument to the</span>
+<span class="sd">    callable is an integer it will be looked up in the mapping, if it&#39;s</span>
+<span class="sd">    a WSGI application it will be raised in a proxy exception.</span>
+
+<span class="sd">    The rest of the arguments are forwarded to the exception constructor.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">mapping</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Type</span><span class="p">[</span><span class="n">HTTPException</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">extra</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Type</span><span class="p">[</span><span class="n">HTTPException</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">mapping</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">mapping</span> <span class="o">=</span> <span class="n">default_exceptions</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mapping</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">mapping</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">extra</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">mapping</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">extra</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">code</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="s2">&quot;Response&quot;</span><span class="p">],</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;te.NoReturn&quot;</span><span class="p">:</span>
+        <span class="kn">from</span> <span class="nn">.sansio.response</span> <span class="kn">import</span> <span class="n">Response</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">Response</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="n">HTTPException</span><span class="p">(</span><span class="n">response</span><span class="o">=</span><span class="n">code</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">code</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">mapping</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">LookupError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;no exception for </span><span class="si">{</span><span class="n">code</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">raise</span> <span class="bp">self</span><span class="o">.</span><span class="n">mapping</span><span class="p">[</span><span class="n">code</span><span class="p">](</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">abort</span><span class="p">(</span>
+    <span class="n">status</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="s2">&quot;Response&quot;</span><span class="p">],</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;te.NoReturn&quot;</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raises an :py:exc:`HTTPException` for the given status code or WSGI</span>
+<span class="sd">    application.</span>
+
+<span class="sd">    If a status code is given, it will be looked up in the list of</span>
+<span class="sd">    exceptions and will raise that exception.  If passed a WSGI application,</span>
+<span class="sd">    it will wrap it in a proxy WSGI exception and raise that::</span>
+
+<span class="sd">       abort(404)  # 404 Not Found</span>
+<span class="sd">       abort(Response(&#39;Hello World&#39;))</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_aborter</span><span class="p">(</span><span class="n">status</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+
+<span class="n">_aborter</span><span class="p">:</span> <span class="n">Aborter</span> <span class="o">=</span> <span class="n">Aborter</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">RaceMaster</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Piotr Jałocha & Mateusz Kotula.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.0.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

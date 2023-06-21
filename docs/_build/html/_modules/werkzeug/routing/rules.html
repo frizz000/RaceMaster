@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>werkzeug.routing.rules &#8212; RaceMaster 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
+    <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
+    <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for werkzeug.routing.rules</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">ast</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">typing</span> <span class="k">as</span> <span class="nn">t</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span> <span class="nn">string</span> <span class="kn">import</span> <span class="n">Template</span>
+<span class="kn">from</span> <span class="nn">types</span> <span class="kn">import</span> <span class="n">CodeType</span>
+
+<span class="kn">from</span> <span class="nn">.._internal</span> <span class="kn">import</span> <span class="n">_to_bytes</span>
+<span class="kn">from</span> <span class="nn">..urls</span> <span class="kn">import</span> <span class="n">url_encode</span>
+<span class="kn">from</span> <span class="nn">..urls</span> <span class="kn">import</span> <span class="n">url_quote</span>
+<span class="kn">from</span> <span class="nn">.converters</span> <span class="kn">import</span> <span class="n">ValidationError</span>
+
+<span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">.converters</span> <span class="kn">import</span> <span class="n">BaseConverter</span>
+    <span class="kn">from</span> <span class="nn">.map</span> <span class="kn">import</span> <span class="n">Map</span>
+
+
+<span class="k">class</span> <span class="nc">Weighting</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">number_static_weights</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">static_weights</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span>
+    <span class="n">number_argument_weights</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">argument_weights</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">RulePart</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A part of a rule.</span>
+
+<span class="sd">    Rules can be represented by parts as delimited by `/` with</span>
+<span class="sd">    instances of this class representing those parts. The *content* is</span>
+<span class="sd">    either the raw content if *static* or a regex string to match</span>
+<span class="sd">    against. The *weight* can be used to order parts when matching.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">content</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">final</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">static</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">suffixed</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">weight</span><span class="p">:</span> <span class="n">Weighting</span>
+
+
+<span class="n">_part_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    (?:</span>
+<span class="sd">        (?P&lt;slash&gt;\/)                                 # a slash</span>
+<span class="sd">      |</span>
+<span class="sd">        (?P&lt;static&gt;[^&lt;\/]+)                           # static rule data</span>
+<span class="sd">      |</span>
+<span class="sd">        (?:</span>
+<span class="sd">          &lt;</span>
+<span class="sd">            (?:</span>
+<span class="sd">              (?P&lt;converter&gt;[a-zA-Z_][a-zA-Z0-9_]*)   # converter name</span>
+<span class="sd">              (?:\((?P&lt;arguments&gt;.*?)\))?             # converter arguments</span>
+<span class="sd">              \:                                      # variable delimiter</span>
+<span class="sd">            )?</span>
+<span class="sd">            (?P&lt;variable&gt;[a-zA-Z_][a-zA-Z0-9_]*)      # variable name</span>
+<span class="sd">           &gt;</span>
+<span class="sd">        )</span>
+<span class="sd">    )</span>
+<span class="sd">    &quot;&quot;&quot;</span><span class="p">,</span>
+    <span class="n">re</span><span class="o">.</span><span class="n">VERBOSE</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">_simple_rule_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;&lt;([^&gt;]+)&gt;&quot;</span><span class="p">)</span>
+<span class="n">_converter_args_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    ((?P&lt;name&gt;\w+)\s*=\s*)?</span>
+<span class="sd">    (?P&lt;value&gt;</span>
+<span class="sd">        True|False|</span>
+<span class="sd">        \d+.\d+|</span>
+<span class="sd">        \d+.|</span>
+<span class="sd">        \d+|</span>
+<span class="sd">        [\w\d_.]+|</span>
+<span class="sd">        [urUR]?(?P&lt;stringval&gt;&quot;[^&quot;]*?&quot;|&#39;[^&#39;]*&#39;)</span>
+<span class="sd">    )\s*,</span>
+<span class="sd">    &quot;&quot;&quot;</span><span class="p">,</span>
+    <span class="n">re</span><span class="o">.</span><span class="n">VERBOSE</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="n">_PYTHON_CONSTANTS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;None&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span> <span class="s2">&quot;True&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;False&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">}</span>
+
+
+<span class="k">def</span> <span class="nf">_find</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">target</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">pos</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Find the *target* in *value* after *pos*.</span>
+
+<span class="sd">    Returns the *value* length if *target* isn&#39;t found.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">pos</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_pythonize</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nb">bool</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">_PYTHON_CONSTANTS</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_PYTHON_CONSTANTS</span><span class="p">[</span><span class="n">value</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">convert</span> <span class="ow">in</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">convert</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+        <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+            <span class="k">pass</span>
+    <span class="k">if</span> <span class="n">value</span><span class="p">[:</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">value</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">:]</span> <span class="ow">and</span> <span class="n">value</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="ow">in</span> <span class="s2">&quot;</span><span class="se">\&quot;</span><span class="s2">&#39;&quot;</span><span class="p">:</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">value</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">parse_converter_args</span><span class="p">(</span><span class="n">argstr</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]]:</span>
+    <span class="n">argstr</span> <span class="o">+=</span> <span class="s2">&quot;,&quot;</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">_converter_args_re</span><span class="o">.</span><span class="n">finditer</span><span class="p">(</span><span class="n">argstr</span><span class="p">):</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">item</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s2">&quot;stringval&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="n">item</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s2">&quot;value&quot;</span><span class="p">)</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">_pythonize</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">item</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">):</span>
+            <span class="n">args</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">name</span> <span class="o">=</span> <span class="n">item</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">)</span>
+            <span class="n">kwargs</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">args</span><span class="p">),</span> <span class="n">kwargs</span>
+
+
+<span class="k">class</span> <span class="nc">RuleFactory</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;As soon as you have more complex URL setups it&#39;s a good idea to use rule</span>
+<span class="sd">    factories to avoid repetitive tasks.  Some of them are builtin, others can</span>
+<span class="sd">    be added by subclassing `RuleFactory` and overriding `get_rules`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">get_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">map</span><span class="p">:</span> <span class="s2">&quot;Map&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="s2">&quot;Rule&quot;</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Subclasses of `RuleFactory` have to override this method and return</span>
+<span class="sd">        an iterable of rules.&quot;&quot;&quot;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+
+
+<span class="k">class</span> <span class="nc">Subdomain</span><span class="p">(</span><span class="n">RuleFactory</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;All URLs provided by this factory have the subdomain set to a</span>
+<span class="sd">    specific domain. For example if you want to use the subdomain for</span>
+<span class="sd">    the current language this can be a good setup::</span>
+
+<span class="sd">        url_map = Map([</span>
+<span class="sd">            Rule(&#39;/&#39;, endpoint=&#39;#select_language&#39;),</span>
+<span class="sd">            Subdomain(&#39;&lt;string(length=2):lang_code&gt;&#39;, [</span>
+<span class="sd">                Rule(&#39;/&#39;, endpoint=&#39;index&#39;),</span>
+<span class="sd">                Rule(&#39;/about&#39;, endpoint=&#39;about&#39;),</span>
+<span class="sd">                Rule(&#39;/help&#39;, endpoint=&#39;help&#39;)</span>
+<span class="sd">            ])</span>
+<span class="sd">        ])</span>
+
+<span class="sd">    All the rules except for the ``&#39;#select_language&#39;`` endpoint will now</span>
+<span class="sd">    listen on a two letter long subdomain that holds the language code</span>
+<span class="sd">    for the current request.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">subdomain</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">rules</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="n">RuleFactory</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">subdomain</span> <span class="o">=</span> <span class="n">subdomain</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rules</span> <span class="o">=</span> <span class="n">rules</span>
+
+    <span class="k">def</span> <span class="nf">get_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">map</span><span class="p">:</span> <span class="s2">&quot;Map&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="s2">&quot;Rule&quot;</span><span class="p">]:</span>
+        <span class="k">for</span> <span class="n">rulefactory</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">rules</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">rulefactory</span><span class="o">.</span><span class="n">get_rules</span><span class="p">(</span><span class="nb">map</span><span class="p">):</span>
+                <span class="n">rule</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">empty</span><span class="p">()</span>
+                <span class="n">rule</span><span class="o">.</span><span class="n">subdomain</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">subdomain</span>
+                <span class="k">yield</span> <span class="n">rule</span>
+
+
+<span class="k">class</span> <span class="nc">Submount</span><span class="p">(</span><span class="n">RuleFactory</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Like `Subdomain` but prefixes the URL rule with a given string::</span>
+
+<span class="sd">        url_map = Map([</span>
+<span class="sd">            Rule(&#39;/&#39;, endpoint=&#39;index&#39;),</span>
+<span class="sd">            Submount(&#39;/blog&#39;, [</span>
+<span class="sd">                Rule(&#39;/&#39;, endpoint=&#39;blog/index&#39;),</span>
+<span class="sd">                Rule(&#39;/entry/&lt;entry_slug&gt;&#39;, endpoint=&#39;blog/show&#39;)</span>
+<span class="sd">            ])</span>
+<span class="sd">        ])</span>
+
+<span class="sd">    Now the rule ``&#39;blog/show&#39;`` matches ``/blog/entry/&lt;entry_slug&gt;``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">rules</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="n">RuleFactory</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">rstrip</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rules</span> <span class="o">=</span> <span class="n">rules</span>
+
+    <span class="k">def</span> <span class="nf">get_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">map</span><span class="p">:</span> <span class="s2">&quot;Map&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="s2">&quot;Rule&quot;</span><span class="p">]:</span>
+        <span class="k">for</span> <span class="n">rulefactory</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">rules</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">rulefactory</span><span class="o">.</span><span class="n">get_rules</span><span class="p">(</span><span class="nb">map</span><span class="p">):</span>
+                <span class="n">rule</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">empty</span><span class="p">()</span>
+                <span class="n">rule</span><span class="o">.</span><span class="n">rule</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">+</span> <span class="n">rule</span><span class="o">.</span><span class="n">rule</span>
+                <span class="k">yield</span> <span class="n">rule</span>
+
+
+<span class="k">class</span> <span class="nc">EndpointPrefix</span><span class="p">(</span><span class="n">RuleFactory</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Prefixes all endpoints (which must be strings for this factory) with</span>
+<span class="sd">    another string. This can be useful for sub applications::</span>
+
+<span class="sd">        url_map = Map([</span>
+<span class="sd">            Rule(&#39;/&#39;, endpoint=&#39;index&#39;),</span>
+<span class="sd">            EndpointPrefix(&#39;blog/&#39;, [Submount(&#39;/blog&#39;, [</span>
+<span class="sd">                Rule(&#39;/&#39;, endpoint=&#39;index&#39;),</span>
+<span class="sd">                Rule(&#39;/entry/&lt;entry_slug&gt;&#39;, endpoint=&#39;show&#39;)</span>
+<span class="sd">            ])])</span>
+<span class="sd">        ])</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">rules</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="n">RuleFactory</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">prefix</span> <span class="o">=</span> <span class="n">prefix</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rules</span> <span class="o">=</span> <span class="n">rules</span>
+
+    <span class="k">def</span> <span class="nf">get_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">map</span><span class="p">:</span> <span class="s2">&quot;Map&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="s2">&quot;Rule&quot;</span><span class="p">]:</span>
+        <span class="k">for</span> <span class="n">rulefactory</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">rules</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">rulefactory</span><span class="o">.</span><span class="n">get_rules</span><span class="p">(</span><span class="nb">map</span><span class="p">):</span>
+                <span class="n">rule</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">empty</span><span class="p">()</span>
+                <span class="n">rule</span><span class="o">.</span><span class="n">endpoint</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">prefix</span> <span class="o">+</span> <span class="n">rule</span><span class="o">.</span><span class="n">endpoint</span>
+                <span class="k">yield</span> <span class="n">rule</span>
+
+
+<span class="k">class</span> <span class="nc">RuleTemplate</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Returns copies of the rules wrapped and expands string templates in</span>
+<span class="sd">    the endpoint, rule, defaults or subdomain sections.</span>
+
+<span class="sd">    Here a small example for such a rule template::</span>
+
+<span class="sd">        from werkzeug.routing import Map, Rule, RuleTemplate</span>
+
+<span class="sd">        resource = RuleTemplate([</span>
+<span class="sd">            Rule(&#39;/$name/&#39;, endpoint=&#39;$name.list&#39;),</span>
+<span class="sd">            Rule(&#39;/$name/&lt;int:id&gt;&#39;, endpoint=&#39;$name.show&#39;)</span>
+<span class="sd">        ])</span>
+
+<span class="sd">        url_map = Map([resource(name=&#39;user&#39;), resource(name=&#39;page&#39;)])</span>
+
+<span class="sd">    When a rule template is called the keyword arguments are used to</span>
+<span class="sd">    replace the placeholders in all the string parameters.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rules</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="s2">&quot;Rule&quot;</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rules</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">rules</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;RuleTemplateFactory&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">RuleTemplateFactory</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rules</span><span class="p">,</span> <span class="nb">dict</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">))</span>
+
+
+<span class="k">class</span> <span class="nc">RuleTemplateFactory</span><span class="p">(</span><span class="n">RuleFactory</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A factory that fills in template variables into rules.  Used by</span>
+<span class="sd">    `RuleTemplate` internally.</span>
+
+<span class="sd">    :internal:</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">rules</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="n">RuleFactory</span><span class="p">],</span> <span class="n">context</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rules</span> <span class="o">=</span> <span class="n">rules</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">context</span> <span class="o">=</span> <span class="n">context</span>
+
+    <span class="k">def</span> <span class="nf">get_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">map</span><span class="p">:</span> <span class="s2">&quot;Map&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="s2">&quot;Rule&quot;</span><span class="p">]:</span>
+        <span class="k">for</span> <span class="n">rulefactory</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">rules</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">rulefactory</span><span class="o">.</span><span class="n">get_rules</span><span class="p">(</span><span class="nb">map</span><span class="p">):</span>
+                <span class="n">new_defaults</span> <span class="o">=</span> <span class="n">subdomain</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="k">if</span> <span class="n">rule</span><span class="o">.</span><span class="n">defaults</span><span class="p">:</span>
+                    <span class="n">new_defaults</span> <span class="o">=</span> <span class="p">{}</span>
+                    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">rule</span><span class="o">.</span><span class="n">defaults</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                            <span class="n">value</span> <span class="o">=</span> <span class="n">Template</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="n">substitute</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">context</span><span class="p">)</span>
+                        <span class="n">new_defaults</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+                <span class="k">if</span> <span class="n">rule</span><span class="o">.</span><span class="n">subdomain</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">subdomain</span> <span class="o">=</span> <span class="n">Template</span><span class="p">(</span><span class="n">rule</span><span class="o">.</span><span class="n">subdomain</span><span class="p">)</span><span class="o">.</span><span class="n">substitute</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">context</span><span class="p">)</span>
+                <span class="n">new_endpoint</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">endpoint</span>
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">new_endpoint</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                    <span class="n">new_endpoint</span> <span class="o">=</span> <span class="n">Template</span><span class="p">(</span><span class="n">new_endpoint</span><span class="p">)</span><span class="o">.</span><span class="n">substitute</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">context</span><span class="p">)</span>
+                <span class="k">yield</span> <span class="n">Rule</span><span class="p">(</span>
+                    <span class="n">Template</span><span class="p">(</span><span class="n">rule</span><span class="o">.</span><span class="n">rule</span><span class="p">)</span><span class="o">.</span><span class="n">substitute</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">context</span><span class="p">),</span>
+                    <span class="n">new_defaults</span><span class="p">,</span>
+                    <span class="n">subdomain</span><span class="p">,</span>
+                    <span class="n">rule</span><span class="o">.</span><span class="n">methods</span><span class="p">,</span>
+                    <span class="n">rule</span><span class="o">.</span><span class="n">build_only</span><span class="p">,</span>
+                    <span class="n">new_endpoint</span><span class="p">,</span>
+                    <span class="n">rule</span><span class="o">.</span><span class="n">strict_slashes</span><span class="p">,</span>
+                <span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_prefix_names</span><span class="p">(</span><span class="n">src</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ast</span><span class="o">.</span><span class="n">stmt</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;ast parse and prefix names with `.` to avoid collision with user vars&quot;&quot;&quot;</span>
+    <span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">src</span><span class="p">)</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tree</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Expr</span><span class="p">):</span>
+        <span class="n">tree</span> <span class="o">=</span> <span class="n">tree</span><span class="o">.</span><span class="n">value</span>  <span class="c1"># type: ignore</span>
+    <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">tree</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">):</span>
+            <span class="n">node</span><span class="o">.</span><span class="n">id</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">node</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">return</span> <span class="n">tree</span>
+
+
+<span class="n">_CALL_CONVERTER_CODE_FMT</span> <span class="o">=</span> <span class="s2">&quot;self._converters[</span><span class="si">{elem!r}</span><span class="s2">].to_url()&quot;</span>
+<span class="n">_IF_KWARGS_URL_ENCODE_CODE</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span><span class="se">\</span>
+<span class="s2">if kwargs:</span>
+<span class="s2">    params = self._encode_query_vars(kwargs)</span>
+<span class="s2">    q = &quot;?&quot; if params else &quot;&quot;</span>
+<span class="s2">else:</span>
+<span class="s2">    q = params = &quot;&quot;</span>
+<span class="s2">&quot;&quot;&quot;</span>
+<span class="n">_IF_KWARGS_URL_ENCODE_AST</span> <span class="o">=</span> <span class="n">_prefix_names</span><span class="p">(</span><span class="n">_IF_KWARGS_URL_ENCODE_CODE</span><span class="p">)</span>
+<span class="n">_URL_ENCODE_AST_NAMES</span> <span class="o">=</span> <span class="p">(</span><span class="n">_prefix_names</span><span class="p">(</span><span class="s2">&quot;q&quot;</span><span class="p">),</span> <span class="n">_prefix_names</span><span class="p">(</span><span class="s2">&quot;params&quot;</span><span class="p">))</span>
+
+
+<span class="k">class</span> <span class="nc">Rule</span><span class="p">(</span><span class="n">RuleFactory</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A Rule represents one URL pattern.  There are some options for `Rule`</span>
+<span class="sd">    that change the way it behaves and are passed to the `Rule` constructor.</span>
+<span class="sd">    Note that besides the rule-string all arguments *must* be keyword arguments</span>
+<span class="sd">    in order to not break the application on Werkzeug upgrades.</span>
+
+<span class="sd">    `string`</span>
+<span class="sd">        Rule strings basically are just normal URL paths with placeholders in</span>
+<span class="sd">        the format ``&lt;converter(arguments):name&gt;`` where the converter and the</span>
+<span class="sd">        arguments are optional.  If no converter is defined the `default`</span>
+<span class="sd">        converter is used which means `string` in the normal configuration.</span>
+
+<span class="sd">        URL rules that end with a slash are branch URLs, others are leaves.</span>
+<span class="sd">        If you have `strict_slashes` enabled (which is the default), all</span>
+<span class="sd">        branch URLs that are matched without a trailing slash will trigger a</span>
+<span class="sd">        redirect to the same URL with the missing slash appended.</span>
+
+<span class="sd">        The converters are defined on the `Map`.</span>
+
+<span class="sd">    `endpoint`</span>
+<span class="sd">        The endpoint for this rule. This can be anything. A reference to a</span>
+<span class="sd">        function, a string, a number etc.  The preferred way is using a string</span>
+<span class="sd">        because the endpoint is used for URL generation.</span>
+
+<span class="sd">    `defaults`</span>
+<span class="sd">        An optional dict with defaults for other rules with the same endpoint.</span>
+<span class="sd">        This is a bit tricky but useful if you want to have unique URLs::</span>
+
+<span class="sd">            url_map = Map([</span>
+<span class="sd">                Rule(&#39;/all/&#39;, defaults={&#39;page&#39;: 1}, endpoint=&#39;all_entries&#39;),</span>
+<span class="sd">                Rule(&#39;/all/page/&lt;int:page&gt;&#39;, endpoint=&#39;all_entries&#39;)</span>
+<span class="sd">            ])</span>
+
+<span class="sd">        If a user now visits ``http://example.com/all/page/1`` they will be</span>
+<span class="sd">        redirected to ``http://example.com/all/``.  If `redirect_defaults` is</span>
+<span class="sd">        disabled on the `Map` instance this will only affect the URL</span>
+<span class="sd">        generation.</span>
+
+<span class="sd">    `subdomain`</span>
+<span class="sd">        The subdomain rule string for this rule. If not specified the rule</span>
+<span class="sd">        only matches for the `default_subdomain` of the map.  If the map is</span>
+<span class="sd">        not bound to a subdomain this feature is disabled.</span>
+
+<span class="sd">        Can be useful if you want to have user profiles on different subdomains</span>
+<span class="sd">        and all subdomains are forwarded to your application::</span>
+
+<span class="sd">            url_map = Map([</span>
+<span class="sd">                Rule(&#39;/&#39;, subdomain=&#39;&lt;username&gt;&#39;, endpoint=&#39;user/homepage&#39;),</span>
+<span class="sd">                Rule(&#39;/stats&#39;, subdomain=&#39;&lt;username&gt;&#39;, endpoint=&#39;user/stats&#39;)</span>
+<span class="sd">            ])</span>
+
+<span class="sd">    `methods`</span>
+<span class="sd">        A sequence of http methods this rule applies to.  If not specified, all</span>
+<span class="sd">        methods are allowed. For example this can be useful if you want different</span>
+<span class="sd">        endpoints for `POST` and `GET`.  If methods are defined and the path</span>
+<span class="sd">        matches but the method matched against is not in this list or in the</span>
+<span class="sd">        list of another rule for that path the error raised is of the type</span>
+<span class="sd">        `MethodNotAllowed` rather than `NotFound`.  If `GET` is present in the</span>
+<span class="sd">        list of methods and `HEAD` is not, `HEAD` is added automatically.</span>
+
+<span class="sd">    `strict_slashes`</span>
+<span class="sd">        Override the `Map` setting for `strict_slashes` only for this rule. If</span>
+<span class="sd">        not specified the `Map` setting is used.</span>
+
+<span class="sd">    `merge_slashes`</span>
+<span class="sd">        Override :attr:`Map.merge_slashes` for this rule.</span>
+
+<span class="sd">    `build_only`</span>
+<span class="sd">        Set this to True and the rule will never match but will create a URL</span>
+<span class="sd">        that can be build. This is useful if you have resources on a subdomain</span>
+<span class="sd">        or folder that are not handled by the WSGI application (like static data)</span>
+
+<span class="sd">    `redirect_to`</span>
+<span class="sd">        If given this must be either a string or callable.  In case of a</span>
+<span class="sd">        callable it&#39;s called with the url adapter that triggered the match and</span>
+<span class="sd">        the values of the URL as keyword arguments and has to return the target</span>
+<span class="sd">        for the redirect, otherwise it has to be a string with placeholders in</span>
+<span class="sd">        rule syntax::</span>
+
+<span class="sd">            def foo_with_slug(adapter, id):</span>
+<span class="sd">                # ask the database for the slug for the old id.  this of</span>
+<span class="sd">                # course has nothing to do with werkzeug.</span>
+<span class="sd">                return f&#39;foo/{Foo.get_slug_for_id(id)}&#39;</span>
+
+<span class="sd">            url_map = Map([</span>
+<span class="sd">                Rule(&#39;/foo/&lt;slug&gt;&#39;, endpoint=&#39;foo&#39;),</span>
+<span class="sd">                Rule(&#39;/some/old/url/&lt;slug&gt;&#39;, redirect_to=&#39;foo/&lt;slug&gt;&#39;),</span>
+<span class="sd">                Rule(&#39;/other/old/url/&lt;int:id&gt;&#39;, redirect_to=foo_with_slug)</span>
+<span class="sd">            ])</span>
+
+<span class="sd">        When the rule is matched the routing system will raise a</span>
+<span class="sd">        `RequestRedirect` exception with the target for the redirect.</span>
+
+<span class="sd">        Keep in mind that the URL will be joined against the URL root of the</span>
+<span class="sd">        script so don&#39;t use a leading slash on the target URL unless you</span>
+<span class="sd">        really mean root of that domain.</span>
+
+<span class="sd">    `alias`</span>
+<span class="sd">        If enabled this rule serves as an alias for another rule with the same</span>
+<span class="sd">        endpoint and arguments.</span>
+
+<span class="sd">    `host`</span>
+<span class="sd">        If provided and the URL map has host matching enabled this can be</span>
+<span class="sd">        used to provide a match rule for the whole host.  This also means</span>
+<span class="sd">        that the subdomain feature is disabled.</span>
+
+<span class="sd">    `websocket`</span>
+<span class="sd">        If ``True``, this rule is only matches for WebSocket (``ws://``,</span>
+<span class="sd">        ``wss://``) requests. By default, rules will only match for HTTP</span>
+<span class="sd">        requests.</span>
+
+<span class="sd">    .. versionchanged:: 2.1</span>
+<span class="sd">        Percent-encoded newlines (``%0a``), which are decoded by WSGI</span>
+<span class="sd">        servers, are considered when routing instead of terminating the</span>
+<span class="sd">        match early.</span>
+
+<span class="sd">    .. versionadded:: 1.0</span>
+<span class="sd">        Added ``websocket``.</span>
+
+<span class="sd">    .. versionadded:: 1.0</span>
+<span class="sd">        Added ``merge_slashes``.</span>
+
+<span class="sd">    .. versionadded:: 0.7</span>
+<span class="sd">        Added ``alias`` and ``host``.</span>
+
+<span class="sd">    .. versionchanged:: 0.6.1</span>
+<span class="sd">       ``HEAD`` is added to ``methods`` if ``GET`` is present.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">string</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">defaults</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">subdomain</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">methods</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">build_only</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">endpoint</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">strict_slashes</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">merge_slashes</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">redirect_to</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">alias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">host</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">websocket</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">string</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;urls must start with a leading slash&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rule</span> <span class="o">=</span> <span class="n">string</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">is_leaf</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">string</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">is_branch</span> <span class="o">=</span> <span class="n">string</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="p">:</span> <span class="s2">&quot;Map&quot;</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># type: ignore</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">strict_slashes</span> <span class="o">=</span> <span class="n">strict_slashes</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">merge_slashes</span> <span class="o">=</span> <span class="n">merge_slashes</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">subdomain</span> <span class="o">=</span> <span class="n">subdomain</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">host</span> <span class="o">=</span> <span class="n">host</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">defaults</span> <span class="o">=</span> <span class="n">defaults</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">build_only</span> <span class="o">=</span> <span class="n">build_only</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">alias</span> <span class="o">=</span> <span class="n">alias</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">websocket</span> <span class="o">=</span> <span class="n">websocket</span>
+
+        <span class="k">if</span> <span class="n">methods</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">methods</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;&#39;methods&#39; should be a list of strings.&quot;</span><span class="p">)</span>
+
+            <span class="n">methods</span> <span class="o">=</span> <span class="p">{</span><span class="n">x</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">methods</span><span class="p">}</span>
+
+            <span class="k">if</span> <span class="s2">&quot;HEAD&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">methods</span> <span class="ow">and</span> <span class="s2">&quot;GET&quot;</span> <span class="ow">in</span> <span class="n">methods</span><span class="p">:</span>
+                <span class="n">methods</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;HEAD&quot;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">websocket</span> <span class="ow">and</span> <span class="n">methods</span> <span class="o">-</span> <span class="p">{</span><span class="s2">&quot;GET&quot;</span><span class="p">,</span> <span class="s2">&quot;HEAD&quot;</span><span class="p">,</span> <span class="s2">&quot;OPTIONS&quot;</span><span class="p">}:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">&quot;WebSocket rules can only use &#39;GET&#39;, &#39;HEAD&#39;, and &#39;OPTIONS&#39; methods.&quot;</span>
+                <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">methods</span> <span class="o">=</span> <span class="n">methods</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">endpoint</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">endpoint</span>  <span class="c1"># type: ignore</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">redirect_to</span> <span class="o">=</span> <span class="n">redirect_to</span>
+
+        <span class="k">if</span> <span class="n">defaults</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">arguments</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">defaults</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">arguments</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_converters</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="s2">&quot;BaseConverter&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parts</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">RulePart</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">empty</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Rule&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return an unbound copy of this rule.</span>
+
+<span class="sd">        This can be useful if want to reuse an already bound URL for another</span>
+<span class="sd">        map.  See ``get_empty_kwargs`` to override what keyword arguments are</span>
+<span class="sd">        provided to the new copy.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)(</span><span class="bp">self</span><span class="o">.</span><span class="n">rule</span><span class="p">,</span> <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">get_empty_kwargs</span><span class="p">())</span>
+
+    <span class="k">def</span> <span class="nf">get_empty_kwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Provides kwargs for instantiating empty copy with empty()</span>
+
+<span class="sd">        Use this method to provide custom keyword arguments to the subclass of</span>
+<span class="sd">        ``Rule`` when calling ``some_rule.empty()``.  Helpful when the subclass</span>
+<span class="sd">        has custom keyword arguments that are needed at instantiation.</span>
+
+<span class="sd">        Must return a ``dict`` that will be provided as kwargs to the new</span>
+<span class="sd">        instance of ``Rule``, following the initial ``self.rule`` value which</span>
+<span class="sd">        is always provided as the first, required positional argument.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">defaults</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">defaults</span><span class="p">:</span>
+            <span class="n">defaults</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">defaults</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span>
+            <span class="n">defaults</span><span class="o">=</span><span class="n">defaults</span><span class="p">,</span>
+            <span class="n">subdomain</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">subdomain</span><span class="p">,</span>
+            <span class="n">methods</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">methods</span><span class="p">,</span>
+            <span class="n">build_only</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">build_only</span><span class="p">,</span>
+            <span class="n">endpoint</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">endpoint</span><span class="p">,</span>
+            <span class="n">strict_slashes</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">strict_slashes</span><span class="p">,</span>
+            <span class="n">redirect_to</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">redirect_to</span><span class="p">,</span>
+            <span class="n">alias</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">alias</span><span class="p">,</span>
+            <span class="n">host</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">host</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">map</span><span class="p">:</span> <span class="s2">&quot;Map&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="s2">&quot;Rule&quot;</span><span class="p">]:</span>
+        <span class="k">yield</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="nf">refresh</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Rebinds and refreshes the URL.  Call this if you modified the</span>
+<span class="sd">        rule in place.</span>
+
+<span class="sd">        :internal:</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="p">,</span> <span class="n">rebind</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">bind</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">map</span><span class="p">:</span> <span class="s2">&quot;Map&quot;</span><span class="p">,</span> <span class="n">rebind</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Bind the url to a map and create a regular expression based on</span>
+<span class="sd">        the information from the rule itself and the defaults from the map.</span>
+
+<span class="sd">        :internal:</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">rebind</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;url rule </span><span class="si">{</span><span class="bp">self</span><span class="si">!r}</span><span class="s2"> already bound to map </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">map</span> <span class="o">=</span> <span class="nb">map</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">strict_slashes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">strict_slashes</span> <span class="o">=</span> <span class="nb">map</span><span class="o">.</span><span class="n">strict_slashes</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">merge_slashes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">merge_slashes</span> <span class="o">=</span> <span class="nb">map</span><span class="o">.</span><span class="n">merge_slashes</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">subdomain</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">subdomain</span> <span class="o">=</span> <span class="nb">map</span><span class="o">.</span><span class="n">default_subdomain</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">get_converter</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">variable_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">converter_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">,</span>
+        <span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;BaseConverter&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Looks up the converter for the given parameter.</span>
+
+<span class="sd">        .. versionadded:: 0.9</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">converter_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">converters</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">LookupError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;the converter </span><span class="si">{</span><span class="n">converter_name</span><span class="si">!r}</span><span class="s2"> does not exist&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">converters</span><span class="p">[</span><span class="n">converter_name</span><span class="p">](</span><span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_encode_query_vars</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query_vars</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">url_encode</span><span class="p">(</span>
+            <span class="n">query_vars</span><span class="p">,</span>
+            <span class="n">charset</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">charset</span><span class="p">,</span>
+            <span class="n">sort</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">sort_parameters</span><span class="p">,</span>
+            <span class="n">key</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">sort_key</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_parse_rule</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rule</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="n">RulePart</span><span class="p">]:</span>
+        <span class="n">content</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="n">static</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="n">argument_weights</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">static_weights</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">final</span> <span class="o">=</span> <span class="kc">False</span>
+
+        <span class="n">pos</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">while</span> <span class="n">pos</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">rule</span><span class="p">):</span>
+            <span class="n">match</span> <span class="o">=</span> <span class="n">_part_re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">rule</span><span class="p">,</span> <span class="n">pos</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">match</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;malformed url rule: </span><span class="si">{</span><span class="n">rule</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+            <span class="n">data</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">groupdict</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;static&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">static_weights</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">static_weights</span><span class="p">),</span> <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;static&quot;</span><span class="p">])))</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="kc">False</span><span class="p">,</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;static&quot;</span><span class="p">]))</span>
+                <span class="n">content</span> <span class="o">+=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;static&quot;</span><span class="p">]</span> <span class="k">if</span> <span class="n">static</span> <span class="k">else</span> <span class="n">re</span><span class="o">.</span><span class="n">escape</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;static&quot;</span><span class="p">])</span>
+
+            <span class="k">if</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;variable&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">static</span><span class="p">:</span>
+                    <span class="c1"># Switching content to represent regex, hence the need to escape</span>
+                    <span class="n">content</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">escape</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+                <span class="n">static</span> <span class="o">=</span> <span class="kc">False</span>
+                <span class="n">c_args</span><span class="p">,</span> <span class="n">c_kwargs</span> <span class="o">=</span> <span class="n">parse_converter_args</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;arguments&quot;</span><span class="p">]</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+                <span class="n">convobj</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_converter</span><span class="p">(</span>
+                    <span class="n">data</span><span class="p">[</span><span class="s2">&quot;variable&quot;</span><span class="p">],</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;converter&quot;</span><span class="p">]</span> <span class="ow">or</span> <span class="s2">&quot;default&quot;</span><span class="p">,</span> <span class="n">c_args</span><span class="p">,</span> <span class="n">c_kwargs</span>
+                <span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_converters</span><span class="p">[</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;variable&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="n">convobj</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">arguments</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;variable&quot;</span><span class="p">])</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">convobj</span><span class="o">.</span><span class="n">part_isolating</span><span class="p">:</span>
+                    <span class="n">final</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">content</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">convobj</span><span class="o">.</span><span class="n">regex</span><span class="si">}</span><span class="s2">)&quot;</span>
+                <span class="n">argument_weights</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">convobj</span><span class="o">.</span><span class="n">weight</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="kc">True</span><span class="p">,</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;variable&quot;</span><span class="p">]))</span>
+
+            <span class="k">if</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;slash&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;/&quot;</span><span class="p">))</span>
+                <span class="k">if</span> <span class="n">final</span><span class="p">:</span>
+                    <span class="n">content</span> <span class="o">+=</span> <span class="s2">&quot;/&quot;</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">static</span><span class="p">:</span>
+                        <span class="n">content</span> <span class="o">+=</span> <span class="sa">r</span><span class="s2">&quot;\Z&quot;</span>
+                    <span class="n">weight</span> <span class="o">=</span> <span class="n">Weighting</span><span class="p">(</span>
+                        <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">static_weights</span><span class="p">),</span>
+                        <span class="n">static_weights</span><span class="p">,</span>
+                        <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">argument_weights</span><span class="p">),</span>
+                        <span class="n">argument_weights</span><span class="p">,</span>
+                    <span class="p">)</span>
+                    <span class="k">yield</span> <span class="n">RulePart</span><span class="p">(</span>
+                        <span class="n">content</span><span class="o">=</span><span class="n">content</span><span class="p">,</span>
+                        <span class="n">final</span><span class="o">=</span><span class="n">final</span><span class="p">,</span>
+                        <span class="n">static</span><span class="o">=</span><span class="n">static</span><span class="p">,</span>
+                        <span class="n">suffixed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                        <span class="n">weight</span><span class="o">=</span><span class="n">weight</span><span class="p">,</span>
+                    <span class="p">)</span>
+                    <span class="n">content</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+                    <span class="n">static</span> <span class="o">=</span> <span class="kc">True</span>
+                    <span class="n">argument_weights</span> <span class="o">=</span> <span class="p">[]</span>
+                    <span class="n">static_weights</span> <span class="o">=</span> <span class="p">[]</span>
+                    <span class="n">final</span> <span class="o">=</span> <span class="kc">False</span>
+
+            <span class="n">pos</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+
+        <span class="n">suffixed</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="k">if</span> <span class="n">final</span> <span class="ow">and</span> <span class="n">content</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;/&quot;</span><span class="p">:</span>
+            <span class="c1"># If a converter is part_isolating=False (matches slashes) and ends with a</span>
+            <span class="c1"># slash, augment the regex to support slash redirects.</span>
+            <span class="n">suffixed</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="n">content</span> <span class="o">=</span> <span class="n">content</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;(?&lt;!/)(/?)&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">static</span><span class="p">:</span>
+            <span class="n">content</span> <span class="o">+=</span> <span class="sa">r</span><span class="s2">&quot;\Z&quot;</span>
+        <span class="n">weight</span> <span class="o">=</span> <span class="n">Weighting</span><span class="p">(</span>
+            <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">static_weights</span><span class="p">),</span>
+            <span class="n">static_weights</span><span class="p">,</span>
+            <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">argument_weights</span><span class="p">),</span>
+            <span class="n">argument_weights</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">yield</span> <span class="n">RulePart</span><span class="p">(</span>
+            <span class="n">content</span><span class="o">=</span><span class="n">content</span><span class="p">,</span>
+            <span class="n">final</span><span class="o">=</span><span class="n">final</span><span class="p">,</span>
+            <span class="n">static</span><span class="o">=</span><span class="n">static</span><span class="p">,</span>
+            <span class="n">suffixed</span><span class="o">=</span><span class="n">suffixed</span><span class="p">,</span>
+            <span class="n">weight</span><span class="o">=</span><span class="n">weight</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">suffixed</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">RulePart</span><span class="p">(</span>
+                <span class="n">content</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">final</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">static</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">suffixed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="n">weight</span>
+            <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">compile</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Compiles the regular expression and stores it.&quot;&quot;&quot;</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span> <span class="s2">&quot;rule not bound&quot;</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">host_matching</span><span class="p">:</span>
+            <span class="n">domain_rule</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">host</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">domain_rule</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">subdomain</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parts</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_converters</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">if</span> <span class="n">domain_rule</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_parts</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="n">RulePart</span><span class="p">(</span>
+                    <span class="n">content</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span>
+                    <span class="n">final</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                    <span class="n">static</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                    <span class="n">suffixed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                    <span class="n">weight</span><span class="o">=</span><span class="n">Weighting</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="p">[],</span> <span class="mi">0</span><span class="p">,</span> <span class="p">[]),</span>
+                <span class="p">)</span>
+            <span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_parts</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_parse_rule</span><span class="p">(</span><span class="n">domain_rule</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;|&quot;</span><span class="p">))</span>
+        <span class="n">rule</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rule</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">merge_slashes</span><span class="p">:</span>
+            <span class="n">rule</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s2">&quot;/{2,}?&quot;</span><span class="p">,</span> <span class="s2">&quot;/&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">rule</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parts</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_parse_rule</span><span class="p">(</span><span class="n">rule</span><span class="p">))</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_build</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_build</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compile_builder</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_build_unknown</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_build_unknown</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compile_builder</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_get_func_code</span><span class="p">(</span><span class="n">code</span><span class="p">:</span> <span class="n">CodeType</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+        <span class="n">globs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">locs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">exec</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">globs</span><span class="p">,</span> <span class="n">locs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">locs</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>  <span class="c1"># type: ignore</span>
+
+    <span class="k">def</span> <span class="nf">_compile_builder</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">append_unknown</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+        <span class="n">defaults</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">defaults</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="n">dom_ops</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">url_ops</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="n">opl</span> <span class="o">=</span> <span class="n">dom_ops</span>
+        <span class="k">for</span> <span class="n">is_dynamic</span><span class="p">,</span> <span class="n">data</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">data</span> <span class="o">==</span> <span class="s2">&quot;|&quot;</span> <span class="ow">and</span> <span class="n">opl</span> <span class="ow">is</span> <span class="n">dom_ops</span><span class="p">:</span>
+                <span class="n">opl</span> <span class="o">=</span> <span class="n">url_ops</span>
+                <span class="k">continue</span>
+            <span class="c1"># this seems like a silly case to ever come up but:</span>
+            <span class="c1"># if a default is given for a value that appears in the rule,</span>
+            <span class="c1"># resolve it to a constant ahead of time</span>
+            <span class="k">if</span> <span class="n">is_dynamic</span> <span class="ow">and</span> <span class="n">data</span> <span class="ow">in</span> <span class="n">defaults</span><span class="p">:</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_converters</span><span class="p">[</span><span class="n">data</span><span class="p">]</span><span class="o">.</span><span class="n">to_url</span><span class="p">(</span><span class="n">defaults</span><span class="p">[</span><span class="n">data</span><span class="p">])</span>
+                <span class="n">opl</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="kc">False</span><span class="p">,</span> <span class="n">data</span><span class="p">))</span>
+            <span class="k">elif</span> <span class="ow">not</span> <span class="n">is_dynamic</span><span class="p">:</span>
+                <span class="n">opl</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">url_quote</span><span class="p">(</span><span class="n">_to_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">charset</span><span class="p">),</span> <span class="n">safe</span><span class="o">=</span><span class="s2">&quot;/:|+&quot;</span><span class="p">))</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">opl</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="kc">True</span><span class="p">,</span> <span class="n">data</span><span class="p">))</span>
+
+        <span class="k">def</span> <span class="nf">_convert</span><span class="p">(</span><span class="n">elem</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ast</span><span class="o">.</span><span class="n">stmt</span><span class="p">:</span>
+            <span class="n">ret</span> <span class="o">=</span> <span class="n">_prefix_names</span><span class="p">(</span><span class="n">_CALL_CONVERTER_CODE_FMT</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">elem</span><span class="o">=</span><span class="n">elem</span><span class="p">))</span>
+            <span class="n">ret</span><span class="o">.</span><span class="n">args</span> <span class="o">=</span> <span class="p">[</span><span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">elem</span><span class="p">),</span> <span class="n">ast</span><span class="o">.</span><span class="n">Load</span><span class="p">())]</span>  <span class="c1"># type: ignore  # str for py2</span>
+            <span class="k">return</span> <span class="n">ret</span>
+
+        <span class="k">def</span> <span class="nf">_parts</span><span class="p">(</span><span class="n">ops</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">ast</span><span class="o">.</span><span class="n">AST</span><span class="p">]:</span>
+            <span class="n">parts</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="n">_convert</span><span class="p">(</span><span class="n">elem</span><span class="p">)</span> <span class="k">if</span> <span class="n">is_dynamic</span> <span class="k">else</span> <span class="n">ast</span><span class="o">.</span><span class="n">Str</span><span class="p">(</span><span class="n">s</span><span class="o">=</span><span class="n">elem</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">is_dynamic</span><span class="p">,</span> <span class="n">elem</span> <span class="ow">in</span> <span class="n">ops</span>
+            <span class="p">]</span>
+            <span class="n">parts</span> <span class="o">=</span> <span class="n">parts</span> <span class="ow">or</span> <span class="p">[</span><span class="n">ast</span><span class="o">.</span><span class="n">Str</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)]</span>
+            <span class="c1"># constant fold</span>
+            <span class="n">ret</span> <span class="o">=</span> <span class="p">[</span><span class="n">parts</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Str</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ret</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">ast</span><span class="o">.</span><span class="n">Str</span><span class="p">):</span>
+                    <span class="n">ret</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">Str</span><span class="p">(</span><span class="n">ret</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">s</span> <span class="o">+</span> <span class="n">p</span><span class="o">.</span><span class="n">s</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">ret</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">ret</span>
+
+        <span class="n">dom_parts</span> <span class="o">=</span> <span class="n">_parts</span><span class="p">(</span><span class="n">dom_ops</span><span class="p">)</span>
+        <span class="n">url_parts</span> <span class="o">=</span> <span class="n">_parts</span><span class="p">(</span><span class="n">url_ops</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">append_unknown</span><span class="p">:</span>
+            <span class="n">body</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">body</span> <span class="o">=</span> <span class="p">[</span><span class="n">_IF_KWARGS_URL_ENCODE_AST</span><span class="p">]</span>
+            <span class="n">url_parts</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">_URL_ENCODE_AST_NAMES</span><span class="p">)</span>
+
+        <span class="k">def</span> <span class="nf">_join</span><span class="p">(</span><span class="n">parts</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">ast</span><span class="o">.</span><span class="n">AST</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">ast</span><span class="o">.</span><span class="n">AST</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>  <span class="c1"># shortcut</span>
+                <span class="k">return</span> <span class="n">parts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">return</span> <span class="n">ast</span><span class="o">.</span><span class="n">JoinedStr</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+
+        <span class="n">body</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="n">ast</span><span class="o">.</span><span class="n">Return</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">Tuple</span><span class="p">([</span><span class="n">_join</span><span class="p">(</span><span class="n">dom_parts</span><span class="p">),</span> <span class="n">_join</span><span class="p">(</span><span class="n">url_parts</span><span class="p">)],</span> <span class="n">ast</span><span class="o">.</span><span class="n">Load</span><span class="p">()))</span>
+        <span class="p">)</span>
+
+        <span class="n">pargs</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">elem</span>
+            <span class="k">for</span> <span class="n">is_dynamic</span><span class="p">,</span> <span class="n">elem</span> <span class="ow">in</span> <span class="n">dom_ops</span> <span class="o">+</span> <span class="n">url_ops</span>
+            <span class="k">if</span> <span class="n">is_dynamic</span> <span class="ow">and</span> <span class="n">elem</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">defaults</span>
+        <span class="p">]</span>
+        <span class="n">kargs</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">defaults</span><span class="p">]</span>
+
+        <span class="n">func_ast</span><span class="p">:</span> <span class="n">ast</span><span class="o">.</span><span class="n">FunctionDef</span> <span class="o">=</span> <span class="n">_prefix_names</span><span class="p">(</span><span class="s2">&quot;def _(): pass&quot;</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+        <span class="n">func_ast</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;&lt;builder:</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">rule</span><span class="si">!r}</span><span class="s2">&gt;&quot;</span>
+        <span class="n">func_ast</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">arg</span><span class="p">(</span><span class="s2">&quot;.self&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">pargs</span> <span class="o">+</span> <span class="n">kargs</span><span class="p">:</span>
+            <span class="n">func_ast</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">arg</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span> <span class="kc">None</span><span class="p">))</span>
+        <span class="n">func_ast</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">kwarg</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">arg</span><span class="p">(</span><span class="s2">&quot;.kwargs&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">kargs</span><span class="p">:</span>
+            <span class="n">func_ast</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">defaults</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">Str</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">))</span>
+        <span class="n">func_ast</span><span class="o">.</span><span class="n">body</span> <span class="o">=</span> <span class="n">body</span>
+
+        <span class="c1"># use `ast.parse` instead of `ast.Module` for better portability</span>
+        <span class="c1"># Python 3.8 changes the signature of `ast.Module`</span>
+        <span class="n">module</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">module</span><span class="o">.</span><span class="n">body</span> <span class="o">=</span> <span class="p">[</span><span class="n">func_ast</span><span class="p">]</span>
+
+        <span class="c1"># mark everything as on line 1, offset 0</span>
+        <span class="c1"># less error-prone than `ast.fix_missing_locations`</span>
+        <span class="c1"># bad line numbers cause an assert to fail in debug builds</span>
+        <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">module</span><span class="p">):</span>
+            <span class="k">if</span> <span class="s2">&quot;lineno&quot;</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">_attributes</span><span class="p">:</span>
+                <span class="n">node</span><span class="o">.</span><span class="n">lineno</span> <span class="o">=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="s2">&quot;end_lineno&quot;</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">_attributes</span><span class="p">:</span>
+                <span class="n">node</span><span class="o">.</span><span class="n">end_lineno</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span>  <span class="c1"># type: ignore[attr-defined]</span>
+            <span class="k">if</span> <span class="s2">&quot;col_offset&quot;</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">_attributes</span><span class="p">:</span>
+                <span class="n">node</span><span class="o">.</span><span class="n">col_offset</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">if</span> <span class="s2">&quot;end_col_offset&quot;</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">_attributes</span><span class="p">:</span>
+                <span class="n">node</span><span class="o">.</span><span class="n">end_col_offset</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">col_offset</span>  <span class="c1"># type: ignore[attr-defined]</span>
+
+        <span class="n">code</span> <span class="o">=</span> <span class="nb">compile</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="s2">&quot;&lt;werkzeug routing&gt;&quot;</span><span class="p">,</span> <span class="s2">&quot;exec&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_func_code</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">func_ast</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">build</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">values</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">],</span> <span class="n">append_unknown</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Assembles the relative url for that rule and the subdomain.</span>
+<span class="sd">        If building doesn&#39;t work for some reasons `None` is returned.</span>
+
+<span class="sd">        :internal:</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">append_unknown</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_build_unknown</span><span class="p">(</span><span class="o">**</span><span class="n">values</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_build</span><span class="p">(</span><span class="o">**</span><span class="n">values</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">ValidationError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">provides_defaults_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rule</span><span class="p">:</span> <span class="s2">&quot;Rule&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check if this rule has defaults for a given rule.</span>
+
+<span class="sd">        :internal:</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span>
+            <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">build_only</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">defaults</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">endpoint</span> <span class="o">==</span> <span class="n">rule</span><span class="o">.</span><span class="n">endpoint</span>
+            <span class="ow">and</span> <span class="bp">self</span> <span class="o">!=</span> <span class="n">rule</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">arguments</span> <span class="o">==</span> <span class="n">rule</span><span class="o">.</span><span class="n">arguments</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">suitable_for</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">values</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">],</span> <span class="n">method</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check if the dict of values has enough data for url generation.</span>
+
+<span class="sd">        :internal:</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># if a method was given explicitly and that method is not supported</span>
+        <span class="c1"># by this rule, this rule is not suitable.</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="n">method</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">methods</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="ow">and</span> <span class="n">method</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">methods</span>
+        <span class="p">):</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="n">defaults</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">defaults</span> <span class="ow">or</span> <span class="p">()</span>
+
+        <span class="c1"># all arguments required must be either in the defaults dict or</span>
+        <span class="c1"># the value dictionary otherwise it&#39;s not suitable</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">arguments</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">defaults</span> <span class="ow">and</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">values</span><span class="p">:</span>
+                <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="c1"># in case defaults are given we ensure that either the value was</span>
+        <span class="c1"># skipped or the value is the same as the default value.</span>
+        <span class="k">if</span> <span class="n">defaults</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">defaults</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">values</span> <span class="ow">and</span> <span class="n">value</span> <span class="o">!=</span> <span class="n">values</span><span class="p">[</span><span class="n">key</span><span class="p">]:</span>
+                    <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">def</span> <span class="nf">build_compare_key</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The build compare key for sorting.</span>
+
+<span class="sd">        :internal:</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span><span class="mi">1</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">alias</span> <span class="k">else</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">arguments</span><span class="p">),</span> <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">defaults</span> <span class="ow">or</span> <span class="p">()))</span>
+
+    <span class="k">def</span> <span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">))</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">_trace</span>
+
+    <span class="fm">__hash__</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># type: ignore</span>
+
+    <span class="k">def</span> <span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">rule</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> (unbound)&gt;&quot;</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">is_dynamic</span><span class="p">,</span> <span class="n">data</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_trace</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">is_dynamic</span><span class="p">:</span>
+                <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="n">data</span><span class="si">}</span><span class="s2">&gt;&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span><span class="o">.</span><span class="n">lstrip</span><span class="p">(</span><span class="s2">&quot;|&quot;</span><span class="p">)</span>
+        <span class="n">methods</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot; (</span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">methods</span><span class="p">)</span><span class="si">}</span><span class="s2">)&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">methods</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">parts</span><span class="si">!r}{</span><span class="n">methods</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">endpoint</span><span class="si">}</span><span class="s2">&gt;&quot;</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">RaceMaster</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Piotr Jałocha & Mateusz Kotula.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.0.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

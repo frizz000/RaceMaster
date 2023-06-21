@@ -94,6 +94,11 @@ class MainInterface:
         self.category_combobox.pack(side='left')
 
     def register_competitors(self):
+        """
+        Opens a new window for registering competitors
+        :return:
+        """
+
         def save_competitor():
             imie = name_entry.get()
             nazwisko = surname_entry.get()
@@ -158,6 +163,10 @@ class MainInterface:
         save_button.pack()
 
     def modify_competitors(self):
+        """
+        Opens a new window for modifying competitors
+        :return:
+        """
         def update_competitor():
             id_zawodnika = id_entry.get()
             imie = name_entry.get()
@@ -230,6 +239,10 @@ class MainInterface:
         save_button.pack(pady=20)
 
     def start_competition(self):
+        """
+        Opens a new window for starting the competition
+        :return:
+        """
         root = tk.Toplevel(self.window)
         root.geometry('1350x270')
         root.resizable(False, False)
@@ -237,6 +250,10 @@ class MainInterface:
         app.mainloop()
 
     def set_category(self):
+        """
+        Opens a new window for setting a new category
+        :return:
+        """
         def save_category():
             age_start = int(start_age_entry.get())
             age_end = int(end_age_entry.get())
@@ -279,6 +296,10 @@ class MainInterface:
         save_button.pack(padx=100, pady=10)
 
     def clear_competitors(self):
+        """
+        Clears all competitors from the database
+        :return:
+        """
         delete_all_competitors = messagebox.askyesno("Potwierdzenie",
                                                      "Czy na pewno chcesz usunąć wszystkich zawodników ich dane oraz kategorie?")
         if delete_all_competitors:
@@ -290,11 +311,20 @@ class MainInterface:
         self.filter_table()
 
     def get_categories(self):
+        """
+        Gets all categories from the database
+        :return:
+        """
         c.execute("SELECT nazwa FROM Kategoria")
         categories = c.fetchall()
         return [category[0] for category in categories]
 
     def filter_by_category(self, event=None):
+        """
+        Filters the table by category
+        :param event:
+        :return:
+        """
         for row in self.tree.get_children():
             self.tree.delete(row)
 
@@ -316,6 +346,11 @@ class MainInterface:
             self.tree.insert('', 'end', values=(index,) + row)
 
     def filter_table(self, vehicle=None):
+        """
+        Filters the table by vehicle
+        :param vehicle:
+        :return:
+        """
         for row in self.tree.get_children():
             self.tree.delete(row)
 
@@ -345,6 +380,10 @@ class MainInterface:
             self.tree.insert('', 'end', values=(index,) + row)
 
     def search_table(self):
+        """
+        Searches the table by name or surname
+        :return:
+        """
         for row in self.tree.get_children():
             self.tree.delete(row)
 
@@ -366,6 +405,10 @@ class MainInterface:
             self.tree.insert('', 'end', values=(index,) + row)
 
     def export_results(self):
+        """
+        Exports the results to a text file
+        :return:
+        """
         c.execute("SELECT id, nazwa FROM Kategoria")
         kategorie = c.fetchall()
 

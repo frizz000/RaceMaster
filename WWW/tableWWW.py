@@ -6,6 +6,10 @@ app = Flask(__name__, template_folder='../templates', static_folder='../static')
 
 @app.route('/')
 def home():
+    """
+    Method to show table with all players
+    :return:
+    """
     conn = sqlite3.connect('../zawody.db')
     c = conn.cursor()
 

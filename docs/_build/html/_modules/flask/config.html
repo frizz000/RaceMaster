@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>flask.config &#8212; RaceMaster 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/sphinx_highlight.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for flask.config</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">errno</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">types</span>
+<span class="kn">import</span> <span class="nn">typing</span> <span class="k">as</span> <span class="nn">t</span>
+
+<span class="kn">from</span> <span class="nn">werkzeug.utils</span> <span class="kn">import</span> <span class="n">import_string</span>
+
+
+<span class="k">class</span> <span class="nc">ConfigAttribute</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Makes an attribute forward to the config&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">get_converter</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">get_converter</span> <span class="o">=</span> <span class="n">get_converter</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="n">rv</span> <span class="o">=</span> <span class="n">obj</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="p">]</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_converter</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">rv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_converter</span><span class="p">(</span><span class="n">rv</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">rv</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">obj</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+
+<span class="k">class</span> <span class="nc">Config</span><span class="p">(</span><span class="nb">dict</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Works exactly like a dict but provides ways to fill it from files</span>
+<span class="sd">    or special dictionaries.  There are two common patterns to populate the</span>
+<span class="sd">    config.</span>
+
+<span class="sd">    Either you can fill the config from a config file::</span>
+
+<span class="sd">        app.config.from_pyfile(&#39;yourconfig.cfg&#39;)</span>
+
+<span class="sd">    Or alternatively you can define the configuration options in the</span>
+<span class="sd">    module that calls :meth:`from_object` or provide an import path to</span>
+<span class="sd">    a module that should be loaded.  It is also possible to tell it to</span>
+<span class="sd">    use the same module and with that provide the configuration values</span>
+<span class="sd">    just before the call::</span>
+
+<span class="sd">        DEBUG = True</span>
+<span class="sd">        SECRET_KEY = &#39;development key&#39;</span>
+<span class="sd">        app.config.from_object(__name__)</span>
+
+<span class="sd">    In both cases (loading from any Python file or loading from modules),</span>
+<span class="sd">    only uppercase keys are added to the config.  This makes it possible to use</span>
+<span class="sd">    lowercase values in the config file for temporary values that are not added</span>
+<span class="sd">    to the config or to define the config keys in the same file that implements</span>
+<span class="sd">    the application.</span>
+
+<span class="sd">    Probably the most interesting way to load configurations is from an</span>
+<span class="sd">    environment variable pointing to a file::</span>
+
+<span class="sd">        app.config.from_envvar(&#39;YOURAPPLICATION_SETTINGS&#39;)</span>
+
+<span class="sd">    In this case before launching the application you have to set this</span>
+<span class="sd">    environment variable to the file you want to use.  On Linux and OS X</span>
+<span class="sd">    use the export statement::</span>
+
+<span class="sd">        export YOURAPPLICATION_SETTINGS=&#39;/path/to/config/file&#39;</span>
+
+<span class="sd">    On windows use `set` instead.</span>
+
+<span class="sd">    :param root_path: path to which files are read relative from.  When the</span>
+<span class="sd">                      config object is created by the application, this is</span>
+<span class="sd">                      the application&#39;s :attr:`~flask.Flask.root_path`.</span>
+<span class="sd">    :param defaults: an optional dictionary of default values</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">root_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">defaults</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">defaults</span> <span class="ow">or</span> <span class="p">{})</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">root_path</span> <span class="o">=</span> <span class="n">root_path</span>
+
+    <span class="k">def</span> <span class="nf">from_envvar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">variable_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">silent</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Loads a configuration from an environment variable pointing to</span>
+<span class="sd">        a configuration file.  This is basically just a shortcut with nicer</span>
+<span class="sd">        error messages for this line of code::</span>
+
+<span class="sd">            app.config.from_pyfile(os.environ[&#39;YOURAPPLICATION_SETTINGS&#39;])</span>
+
+<span class="sd">        :param variable_name: name of the environment variable</span>
+<span class="sd">        :param silent: set to ``True`` if you want silent failure for missing</span>
+<span class="sd">                       files.</span>
+<span class="sd">        :return: ``True`` if the file was loaded successfully.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">rv</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">variable_name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">rv</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">silent</span><span class="p">:</span>
+                <span class="k">return</span> <span class="kc">False</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;The environment variable </span><span class="si">{</span><span class="n">variable_name</span><span class="si">!r}</span><span class="s2"> is not set&quot;</span>
+                <span class="s2">&quot; and as such configuration could not be loaded. Set&quot;</span>
+                <span class="s2">&quot; this variable and make it point to a configuration&quot;</span>
+                <span class="s2">&quot; file&quot;</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_pyfile</span><span class="p">(</span><span class="n">rv</span><span class="p">,</span> <span class="n">silent</span><span class="o">=</span><span class="n">silent</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">from_prefixed_env</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;FLASK&quot;</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">loads</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Load any environment variables that start with ``FLASK_``,</span>
+<span class="sd">        dropping the prefix from the env key for the config key. Values</span>
+<span class="sd">        are passed through a loading function to attempt to convert them</span>
+<span class="sd">        to more specific types than strings.</span>
+
+<span class="sd">        Keys are loaded in :func:`sorted` order.</span>
+
+<span class="sd">        The default loading function attempts to parse values as any</span>
+<span class="sd">        valid JSON type, including dicts and lists.</span>
+
+<span class="sd">        Specific items in nested dicts can be set by separating the</span>
+<span class="sd">        keys with double underscores (``__``). If an intermediate key</span>
+<span class="sd">        doesn&#39;t exist, it will be initialized to an empty dict.</span>
+
+<span class="sd">        :param prefix: Load env vars that start with this prefix,</span>
+<span class="sd">            separated with an underscore (``_``).</span>
+<span class="sd">        :param loads: Pass each string value to this function and use</span>
+<span class="sd">            the returned value as the config value. If any error is</span>
+<span class="sd">            raised it is ignored and the value remains a string. The</span>
+<span class="sd">            default is :func:`json.loads`.</span>
+
+<span class="sd">        .. versionadded:: 2.1</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">prefix</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">_&quot;</span>
+        <span class="n">len_prefix</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">):</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">prefix</span><span class="p">):</span>
+                <span class="k">continue</span>
+
+            <span class="n">value</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="n">loads</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                <span class="c1"># Keep the value as a string if loading failed.</span>
+                <span class="k">pass</span>
+
+            <span class="c1"># Change to key.removeprefix(prefix) on Python &gt;= 3.9.</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="n">key</span><span class="p">[</span><span class="n">len_prefix</span><span class="p">:]</span>
+
+            <span class="k">if</span> <span class="s2">&quot;__&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">key</span><span class="p">:</span>
+                <span class="c1"># A non-nested key, set directly.</span>
+                <span class="bp">self</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+                <span class="k">continue</span>
+
+            <span class="c1"># Traverse nested dictionaries with keys separated by &quot;__&quot;.</span>
+            <span class="n">current</span> <span class="o">=</span> <span class="bp">self</span>
+            <span class="o">*</span><span class="n">parts</span><span class="p">,</span> <span class="n">tail</span> <span class="o">=</span> <span class="n">key</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;__&quot;</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">:</span>
+                <span class="c1"># If an intermediate dict does not exist, create it.</span>
+                <span class="k">if</span> <span class="n">part</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">current</span><span class="p">:</span>
+                    <span class="n">current</span><span class="p">[</span><span class="n">part</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+                <span class="n">current</span> <span class="o">=</span> <span class="n">current</span><span class="p">[</span><span class="n">part</span><span class="p">]</span>
+
+            <span class="n">current</span><span class="p">[</span><span class="n">tail</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">def</span> <span class="nf">from_pyfile</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">silent</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Updates the values in the config from a Python file.  This function</span>
+<span class="sd">        behaves as if the file was imported as module with the</span>
+<span class="sd">        :meth:`from_object` function.</span>
+
+<span class="sd">        :param filename: the filename of the config.  This can either be an</span>
+<span class="sd">                         absolute filename or a filename relative to the</span>
+<span class="sd">                         root path.</span>
+<span class="sd">        :param silent: set to ``True`` if you want silent failure for missing</span>
+<span class="sd">                       files.</span>
+<span class="sd">        :return: ``True`` if the file was loaded successfully.</span>
+
+<span class="sd">        .. versionadded:: 0.7</span>
+<span class="sd">           `silent` parameter.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">filename</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">root_path</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="n">types</span><span class="o">.</span><span class="n">ModuleType</span><span class="p">(</span><span class="s2">&quot;config&quot;</span><span class="p">)</span>
+        <span class="n">d</span><span class="o">.</span><span class="vm">__file__</span> <span class="o">=</span> <span class="n">filename</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;rb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">config_file</span><span class="p">:</span>
+                <span class="n">exec</span><span class="p">(</span><span class="nb">compile</span><span class="p">(</span><span class="n">config_file</span><span class="o">.</span><span class="n">read</span><span class="p">(),</span> <span class="n">filename</span><span class="p">,</span> <span class="s2">&quot;exec&quot;</span><span class="p">),</span> <span class="n">d</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">OSError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">silent</span> <span class="ow">and</span> <span class="n">e</span><span class="o">.</span><span class="n">errno</span> <span class="ow">in</span> <span class="p">(</span><span class="n">errno</span><span class="o">.</span><span class="n">ENOENT</span><span class="p">,</span> <span class="n">errno</span><span class="o">.</span><span class="n">EISDIR</span><span class="p">,</span> <span class="n">errno</span><span class="o">.</span><span class="n">ENOTDIR</span><span class="p">):</span>
+                <span class="k">return</span> <span class="kc">False</span>
+            <span class="n">e</span><span class="o">.</span><span class="n">strerror</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Unable to load configuration file (</span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">strerror</span><span class="si">}</span><span class="s2">)&quot;</span>
+            <span class="k">raise</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">from_object</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">def</span> <span class="nf">from_object</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="nb">object</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Updates the values from the given object.  An object can be of one</span>
+<span class="sd">        of the following two types:</span>
+
+<span class="sd">        -   a string: in this case the object with that name will be imported</span>
+<span class="sd">        -   an actual object reference: that object is used directly</span>
+
+<span class="sd">        Objects are usually either modules or classes. :meth:`from_object`</span>
+<span class="sd">        loads only the uppercase attributes of the module/class. A ``dict``</span>
+<span class="sd">        object will not work with :meth:`from_object` because the keys of a</span>
+<span class="sd">        ``dict`` are not attributes of the ``dict`` class.</span>
+
+<span class="sd">        Example of module-based configuration::</span>
+
+<span class="sd">            app.config.from_object(&#39;yourapplication.default_config&#39;)</span>
+<span class="sd">            from yourapplication import default_config</span>
+<span class="sd">            app.config.from_object(default_config)</span>
+
+<span class="sd">        Nothing is done to the object before loading. If the object is a</span>
+<span class="sd">        class and has ``@property`` attributes, it needs to be</span>
+<span class="sd">        instantiated before being passed to this method.</span>
+
+<span class="sd">        You should not use this function to load the actual configuration but</span>
+<span class="sd">        rather configuration defaults.  The actual config should be loaded</span>
+<span class="sd">        with :meth:`from_pyfile` and ideally from a location not within the</span>
+<span class="sd">        package because the package might be installed system wide.</span>
+
+<span class="sd">        See :ref:`config-dev-prod` for an example of class-based configuration</span>
+<span class="sd">        using :meth:`from_object`.</span>
+
+<span class="sd">        :param obj: an import name or object</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="n">obj</span> <span class="o">=</span> <span class="n">import_string</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="nb">dir</span><span class="p">(</span><span class="n">obj</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">key</span><span class="o">.</span><span class="n">isupper</span><span class="p">():</span>
+                <span class="bp">self</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">from_file</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">load</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[[</span><span class="n">t</span><span class="o">.</span><span class="n">IO</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]],</span> <span class="n">t</span><span class="o">.</span><span class="n">Mapping</span><span class="p">],</span>
+        <span class="n">silent</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Update the values in the config from a file that is loaded</span>
+<span class="sd">        using the ``load`` parameter. The loaded data is passed to the</span>
+<span class="sd">        :meth:`from_mapping` method.</span>
+
+<span class="sd">        .. code-block:: python</span>
+
+<span class="sd">            import json</span>
+<span class="sd">            app.config.from_file(&quot;config.json&quot;, load=json.load)</span>
+
+<span class="sd">            import toml</span>
+<span class="sd">            app.config.from_file(&quot;config.toml&quot;, load=toml.load)</span>
+
+<span class="sd">        :param filename: The path to the data file. This can be an</span>
+<span class="sd">            absolute path or relative to the config root path.</span>
+<span class="sd">        :param load: A callable that takes a file handle and returns a</span>
+<span class="sd">            mapping of loaded data from the file.</span>
+<span class="sd">        :type load: ``Callable[[Reader], Mapping]`` where ``Reader``</span>
+<span class="sd">            implements a ``read`` method.</span>
+<span class="sd">        :param silent: Ignore the file if it doesn&#39;t exist.</span>
+<span class="sd">        :return: ``True`` if the file was loaded successfully.</span>
+
+<span class="sd">        .. versionadded:: 2.0</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">filename</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">root_path</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">filename</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">obj</span> <span class="o">=</span> <span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">OSError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">silent</span> <span class="ow">and</span> <span class="n">e</span><span class="o">.</span><span class="n">errno</span> <span class="ow">in</span> <span class="p">(</span><span class="n">errno</span><span class="o">.</span><span class="n">ENOENT</span><span class="p">,</span> <span class="n">errno</span><span class="o">.</span><span class="n">EISDIR</span><span class="p">):</span>
+                <span class="k">return</span> <span class="kc">False</span>
+
+            <span class="n">e</span><span class="o">.</span><span class="n">strerror</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Unable to load configuration file (</span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">strerror</span><span class="si">}</span><span class="s2">)&quot;</span>
+            <span class="k">raise</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">from_mapping</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">from_mapping</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">mapping</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Updates the config like :meth:`update` ignoring items with non-upper</span>
+<span class="sd">        keys.</span>
+<span class="sd">        :return: Always returns ``True``.</span>
+
+<span class="sd">        .. versionadded:: 0.11</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">mappings</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">if</span> <span class="n">mapping</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">mappings</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">mapping</span><span class="p">)</span>
+        <span class="n">mappings</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">mappings</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">key</span><span class="o">.</span><span class="n">isupper</span><span class="p">():</span>
+                <span class="bp">self</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">def</span> <span class="nf">get_namespace</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">namespace</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">lowercase</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">trim_namespace</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a dictionary containing a subset of configuration options</span>
+<span class="sd">        that match the specified namespace/prefix. Example usage::</span>
+
+<span class="sd">            app.config[&#39;IMAGE_STORE_TYPE&#39;] = &#39;fs&#39;</span>
+<span class="sd">            app.config[&#39;IMAGE_STORE_PATH&#39;] = &#39;/var/app/images&#39;</span>
+<span class="sd">            app.config[&#39;IMAGE_STORE_BASE_URL&#39;] = &#39;http://img.website.com&#39;</span>
+<span class="sd">            image_store_config = app.config.get_namespace(&#39;IMAGE_STORE_&#39;)</span>
+
+<span class="sd">        The resulting dictionary `image_store_config` would look like::</span>
+
+<span class="sd">            {</span>
+<span class="sd">                &#39;type&#39;: &#39;fs&#39;,</span>
+<span class="sd">                &#39;path&#39;: &#39;/var/app/images&#39;,</span>
+<span class="sd">                &#39;base_url&#39;: &#39;http://img.website.com&#39;</span>
+<span class="sd">            }</span>
+
+<span class="sd">        This is often useful when configuration options map directly to</span>
+<span class="sd">        keyword arguments in functions or class constructors.</span>
+
+<span class="sd">        :param namespace: a configuration namespace</span>
+<span class="sd">        :param lowercase: a flag indicating if the keys of the resulting</span>
+<span class="sd">                          dictionary should be lowercase</span>
+<span class="sd">        :param trim_namespace: a flag indicating if the keys of the resulting</span>
+<span class="sd">                          dictionary should not include the namespace</span>
+
+<span class="sd">        .. versionadded:: 0.11</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">rv</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">k</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">namespace</span><span class="p">):</span>
+                <span class="k">continue</span>
+            <span class="k">if</span> <span class="n">trim_namespace</span><span class="p">:</span>
+                <span class="n">key</span> <span class="o">=</span> <span class="n">k</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">namespace</span><span class="p">)</span> <span class="p">:]</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">key</span> <span class="o">=</span> <span class="n">k</span>
+            <span class="k">if</span> <span class="n">lowercase</span><span class="p">:</span>
+                <span class="n">key</span> <span class="o">=</span> <span class="n">key</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+            <span class="n">rv</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span>
+        <span class="k">return</span> <span class="n">rv</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="nb">dict</span><span class="o">.</span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="si">}</span><span class="s2">&gt;&quot;</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">RaceMaster</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Piotr Jałocha & Mateusz Kotula.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.0.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

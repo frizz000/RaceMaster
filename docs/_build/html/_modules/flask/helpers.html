@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>flask.helpers &#8212; RaceMaster 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/sphinx_highlight.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for flask.helpers</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">pkgutil</span>
+<span class="kn">import</span> <span class="nn">socket</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">typing</span> <span class="k">as</span> <span class="nn">t</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">lru_cache</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">update_wrapper</span>
+<span class="kn">from</span> <span class="nn">threading</span> <span class="kn">import</span> <span class="n">RLock</span>
+
+<span class="kn">import</span> <span class="nn">werkzeug.utils</span>
+<span class="kn">from</span> <span class="nn">werkzeug.exceptions</span> <span class="kn">import</span> <span class="n">abort</span> <span class="k">as</span> <span class="n">_wz_abort</span>
+<span class="kn">from</span> <span class="nn">werkzeug.utils</span> <span class="kn">import</span> <span class="n">redirect</span> <span class="k">as</span> <span class="n">_wz_redirect</span>
+
+<span class="kn">from</span> <span class="nn">.globals</span> <span class="kn">import</span> <span class="n">_cv_request</span>
+<span class="kn">from</span> <span class="nn">.globals</span> <span class="kn">import</span> <span class="n">current_app</span>
+<span class="kn">from</span> <span class="nn">.globals</span> <span class="kn">import</span> <span class="n">request</span>
+<span class="kn">from</span> <span class="nn">.globals</span> <span class="kn">import</span> <span class="n">request_ctx</span>
+<span class="kn">from</span> <span class="nn">.globals</span> <span class="kn">import</span> <span class="n">session</span>
+<span class="kn">from</span> <span class="nn">.signals</span> <span class="kn">import</span> <span class="n">message_flashed</span>
+
+<span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">TYPE_CHECKING</span><span class="p">:</span>  <span class="c1"># pragma: no cover</span>
+    <span class="kn">from</span> <span class="nn">werkzeug.wrappers</span> <span class="kn">import</span> <span class="n">Response</span> <span class="k">as</span> <span class="n">BaseResponse</span>
+    <span class="kn">from</span> <span class="nn">.wrappers</span> <span class="kn">import</span> <span class="n">Response</span>
+    <span class="kn">import</span> <span class="nn">typing_extensions</span> <span class="k">as</span> <span class="nn">te</span>
+
+
+<span class="k">def</span> <span class="nf">get_env</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get the environment the app is running in, indicated by the</span>
+<span class="sd">    :envvar:`FLASK_ENV` environment variable. The default is</span>
+<span class="sd">    ``&#39;production&#39;``.</span>
+
+<span class="sd">    .. deprecated:: 2.2</span>
+<span class="sd">        Will be removed in Flask 2.3.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span> <span class="nn">warnings</span>
+
+    <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+        <span class="s2">&quot;&#39;FLASK_ENV&#39; and &#39;get_env&#39; are deprecated and will be removed&quot;</span>
+        <span class="s2">&quot; in Flask 2.3. Use &#39;FLASK_DEBUG&#39; instead.&quot;</span><span class="p">,</span>
+        <span class="ne">DeprecationWarning</span><span class="p">,</span>
+        <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;FLASK_ENV&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;production&quot;</span>
+
+
+<span class="k">def</span> <span class="nf">get_debug_flag</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get whether debug mode should be enabled for the app, indicated by the</span>
+<span class="sd">    :envvar:`FLASK_DEBUG` environment variable. The default is ``False``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">val</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;FLASK_DEBUG&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">val</span><span class="p">:</span>
+        <span class="n">env</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;FLASK_ENV&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">env</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span>
+                <span class="s2">&quot;&#39;FLASK_ENV&#39; is deprecated and will not be used in&quot;</span>
+                <span class="s2">&quot; Flask 2.3. Use &#39;FLASK_DEBUG&#39; instead.&quot;</span><span class="p">,</span>
+                <span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">env</span> <span class="o">==</span> <span class="s2">&quot;development&quot;</span>
+
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="k">return</span> <span class="n">val</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">&quot;0&quot;</span><span class="p">,</span> <span class="s2">&quot;false&quot;</span><span class="p">,</span> <span class="s2">&quot;no&quot;</span><span class="p">}</span>
+
+
+<span class="k">def</span> <span class="nf">get_load_dotenv</span><span class="p">(</span><span class="n">default</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get whether the user has disabled loading default dotenv files by</span>
+<span class="sd">    setting :envvar:`FLASK_SKIP_DOTENV`. The default is ``True``, load</span>
+<span class="sd">    the files.</span>
+
+<span class="sd">    :param default: What to return if the env var isn&#39;t set.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">val</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;FLASK_SKIP_DOTENV&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">val</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">default</span>
+
+    <span class="k">return</span> <span class="n">val</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;0&quot;</span><span class="p">,</span> <span class="s2">&quot;false&quot;</span><span class="p">,</span> <span class="s2">&quot;no&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">stream_with_context</span><span class="p">(</span>
+    <span class="n">generator_or_function</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span>
+        <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">AnyStr</span><span class="p">],</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">AnyStr</span><span class="p">]]</span>
+    <span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">AnyStr</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Request contexts disappear when the response is started on the server.</span>
+<span class="sd">    This is done for efficiency reasons and to make it less likely to encounter</span>
+<span class="sd">    memory leaks with badly written WSGI middlewares.  The downside is that if</span>
+<span class="sd">    you are using streamed responses, the generator cannot access request bound</span>
+<span class="sd">    information any more.</span>
+
+<span class="sd">    This function however can help you keep the context around for longer::</span>
+
+<span class="sd">        from flask import stream_with_context, request, Response</span>
+
+<span class="sd">        @app.route(&#39;/stream&#39;)</span>
+<span class="sd">        def streamed_response():</span>
+<span class="sd">            @stream_with_context</span>
+<span class="sd">            def generate():</span>
+<span class="sd">                yield &#39;Hello &#39;</span>
+<span class="sd">                yield request.args[&#39;name&#39;]</span>
+<span class="sd">                yield &#39;!&#39;</span>
+<span class="sd">            return Response(generate())</span>
+
+<span class="sd">    Alternatively it can also be used around a specific generator::</span>
+
+<span class="sd">        from flask import stream_with_context, request, Response</span>
+
+<span class="sd">        @app.route(&#39;/stream&#39;)</span>
+<span class="sd">        def streamed_response():</span>
+<span class="sd">            def generate():</span>
+<span class="sd">                yield &#39;Hello &#39;</span>
+<span class="sd">                yield request.args[&#39;name&#39;]</span>
+<span class="sd">                yield &#39;!&#39;</span>
+<span class="sd">            return Response(stream_with_context(generate()))</span>
+
+<span class="sd">    .. versionadded:: 0.9</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">gen</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">(</span><span class="n">generator_or_function</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+    <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>
+
+        <span class="k">def</span> <span class="nf">decorator</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+            <span class="n">gen</span> <span class="o">=</span> <span class="n">generator_or_function</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+            <span class="k">return</span> <span class="n">stream_with_context</span><span class="p">(</span><span class="n">gen</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">update_wrapper</span><span class="p">(</span><span class="n">decorator</span><span class="p">,</span> <span class="n">generator_or_function</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+
+    <span class="k">def</span> <span class="nf">generator</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Generator</span><span class="p">:</span>
+        <span class="n">ctx</span> <span class="o">=</span> <span class="n">_cv_request</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">ctx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="s2">&quot;&#39;stream_with_context&#39; can only be used when a request&quot;</span>
+                <span class="s2">&quot; context is active, such as in a view function.&quot;</span>
+            <span class="p">)</span>
+        <span class="k">with</span> <span class="n">ctx</span><span class="p">:</span>
+            <span class="c1"># Dummy sentinel.  Has to be inside the context block or we&#39;re</span>
+            <span class="c1"># not actually keeping the context around.</span>
+            <span class="k">yield</span> <span class="kc">None</span>
+
+            <span class="c1"># The try/finally is here so that if someone passes a WSGI level</span>
+            <span class="c1"># iterator in we&#39;re still running the cleanup logic.  Generators</span>
+            <span class="c1"># don&#39;t need that because they are closed on their destruction</span>
+            <span class="c1"># automatically.</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">yield from</span> <span class="n">gen</span>
+            <span class="k">finally</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">gen</span><span class="p">,</span> <span class="s2">&quot;close&quot;</span><span class="p">):</span>
+                    <span class="n">gen</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>  <span class="c1"># type: ignore</span>
+
+    <span class="c1"># The trick is to start the generator.  Then the code execution runs until</span>
+    <span class="c1"># the first dummy None is yielded at which point the context was already</span>
+    <span class="c1"># pushed.  This item is discarded.  Then when the iteration continues the</span>
+    <span class="c1"># real generator is executed.</span>
+    <span class="n">wrapped_g</span> <span class="o">=</span> <span class="n">generator</span><span class="p">()</span>
+    <span class="nb">next</span><span class="p">(</span><span class="n">wrapped_g</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">wrapped_g</span>
+
+
+<span class="k">def</span> <span class="nf">make_response</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Response&quot;</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sometimes it is necessary to set additional headers in a view.  Because</span>
+<span class="sd">    views do not have to return response objects but can return a value that</span>
+<span class="sd">    is converted into a response object by Flask itself, it becomes tricky to</span>
+<span class="sd">    add headers to it.  This function can be called instead of using a return</span>
+<span class="sd">    and you will get a response object which you can use to attach headers.</span>
+
+<span class="sd">    If view looked like this and you want to add a new header::</span>
+
+<span class="sd">        def index():</span>
+<span class="sd">            return render_template(&#39;index.html&#39;, foo=42)</span>
+
+<span class="sd">    You can now do something like this::</span>
+
+<span class="sd">        def index():</span>
+<span class="sd">            response = make_response(render_template(&#39;index.html&#39;, foo=42))</span>
+<span class="sd">            response.headers[&#39;X-Parachutes&#39;] = &#39;parachutes are cool&#39;</span>
+<span class="sd">            return response</span>
+
+<span class="sd">    This function accepts the very same arguments you can return from a</span>
+<span class="sd">    view function.  This for example creates a response with a 404 error</span>
+<span class="sd">    code::</span>
+
+<span class="sd">        response = make_response(render_template(&#39;not_found.html&#39;), 404)</span>
+
+<span class="sd">    The other use case of this function is to force the return value of a</span>
+<span class="sd">    view function into a response which is helpful with view</span>
+<span class="sd">    decorators::</span>
+
+<span class="sd">        response = make_response(view_function())</span>
+<span class="sd">        response.headers[&#39;X-Parachutes&#39;] = &#39;parachutes are cool&#39;</span>
+
+<span class="sd">    Internally this function does the following things:</span>
+
+<span class="sd">    -   if no arguments are passed, it creates a new response argument</span>
+<span class="sd">    -   if one argument is passed, :meth:`flask.Flask.make_response`</span>
+<span class="sd">        is invoked with it.</span>
+<span class="sd">    -   if more than one argument is passed, the arguments are passed</span>
+<span class="sd">        to the :meth:`flask.Flask.make_response` function as tuple.</span>
+
+<span class="sd">    .. versionadded:: 0.6</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">args</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">current_app</span><span class="o">.</span><span class="n">response_class</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">args</span> <span class="o">=</span> <span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">current_app</span><span class="o">.</span><span class="n">make_response</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+
+
+<span class="k">def</span> <span class="nf">url_for</span><span class="p">(</span>
+    <span class="n">endpoint</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">_anchor</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">_method</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">_scheme</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">_external</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">values</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generate a URL to the given endpoint with the given values.</span>
+
+<span class="sd">    This requires an active request or application context, and calls</span>
+<span class="sd">    :meth:`current_app.url_for() &lt;flask.Flask.url_for&gt;`. See that method</span>
+<span class="sd">    for full documentation.</span>
+
+<span class="sd">    :param endpoint: The endpoint name associated with the URL to</span>
+<span class="sd">        generate. If this starts with a ``.``, the current blueprint</span>
+<span class="sd">        name (if any) will be used.</span>
+<span class="sd">    :param _anchor: If given, append this as ``#anchor`` to the URL.</span>
+<span class="sd">    :param _method: If given, generate the URL associated with this</span>
+<span class="sd">        method for the endpoint.</span>
+<span class="sd">    :param _scheme: If given, the URL will have this scheme if it is</span>
+<span class="sd">        external.</span>
+<span class="sd">    :param _external: If given, prefer the URL to be internal (False) or</span>
+<span class="sd">        require it to be external (True). External URLs include the</span>
+<span class="sd">        scheme and domain. When not in an active request, URLs are</span>
+<span class="sd">        external by default.</span>
+<span class="sd">    :param values: Values to use for the variable parts of the URL rule.</span>
+<span class="sd">        Unknown keys are appended as query string arguments, like</span>
+<span class="sd">        ``?a=b&amp;c=d``.</span>
+
+<span class="sd">    .. versionchanged:: 2.2</span>
+<span class="sd">        Calls ``current_app.url_for``, allowing an app to override the</span>
+<span class="sd">        behavior.</span>
+
+<span class="sd">    .. versionchanged:: 0.10</span>
+<span class="sd">       The ``_scheme`` parameter was added.</span>
+
+<span class="sd">    .. versionchanged:: 0.9</span>
+<span class="sd">       The ``_anchor`` and ``_method`` parameters were added.</span>
+
+<span class="sd">    .. versionchanged:: 0.9</span>
+<span class="sd">       Calls ``app.handle_url_build_error`` on build errors.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">current_app</span><span class="o">.</span><span class="n">url_for</span><span class="p">(</span>
+        <span class="n">endpoint</span><span class="p">,</span>
+        <span class="n">_anchor</span><span class="o">=</span><span class="n">_anchor</span><span class="p">,</span>
+        <span class="n">_method</span><span class="o">=</span><span class="n">_method</span><span class="p">,</span>
+        <span class="n">_scheme</span><span class="o">=</span><span class="n">_scheme</span><span class="p">,</span>
+        <span class="n">_external</span><span class="o">=</span><span class="n">_external</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">values</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<div class="viewcode-block" id="redirect"><a class="viewcode-back" href="../../index.html#WWW.registerWWW.redirect">[docs]</a><span class="k">def</span> <span class="nf">redirect</span><span class="p">(</span>
+    <span class="n">location</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">code</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">302</span><span class="p">,</span> <span class="n">Response</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Type</span><span class="p">[</span><span class="s2">&quot;BaseResponse&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;BaseResponse&quot;</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Create a redirect response object.</span>
+
+<span class="sd">    If :data:`~flask.current_app` is available, it will use its</span>
+<span class="sd">    :meth:`~flask.Flask.redirect` method, otherwise it will use</span>
+<span class="sd">    :func:`werkzeug.utils.redirect`.</span>
+
+<span class="sd">    :param location: The URL to redirect to.</span>
+<span class="sd">    :param code: The status code for the redirect.</span>
+<span class="sd">    :param Response: The response class to use. Not used when</span>
+<span class="sd">        ``current_app`` is active, which uses ``app.response_class``.</span>
+
+<span class="sd">    .. versionadded:: 2.2</span>
+<span class="sd">        Calls ``current_app.redirect`` if available instead of always</span>
+<span class="sd">        using Werkzeug&#39;s default ``redirect``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">current_app</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">current_app</span><span class="o">.</span><span class="n">redirect</span><span class="p">(</span><span class="n">location</span><span class="p">,</span> <span class="n">code</span><span class="o">=</span><span class="n">code</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">_wz_redirect</span><span class="p">(</span><span class="n">location</span><span class="p">,</span> <span class="n">code</span><span class="o">=</span><span class="n">code</span><span class="p">,</span> <span class="n">Response</span><span class="o">=</span><span class="n">Response</span><span class="p">)</span></div>
+
+
+<span class="k">def</span> <span class="nf">abort</span><span class="p">(</span>  <span class="c1"># type: ignore[misc]</span>
+    <span class="n">code</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="s2">&quot;BaseResponse&quot;</span><span class="p">],</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;te.NoReturn&quot;</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raise an :exc:`~werkzeug.exceptions.HTTPException` for the given</span>
+<span class="sd">    status code.</span>
+
+<span class="sd">    If :data:`~flask.current_app` is available, it will call its</span>
+<span class="sd">    :attr:`~flask.Flask.aborter` object, otherwise it will use</span>
+<span class="sd">    :func:`werkzeug.exceptions.abort`.</span>
+
+<span class="sd">    :param code: The status code for the exception, which must be</span>
+<span class="sd">        registered in ``app.aborter``.</span>
+<span class="sd">    :param args: Passed to the exception.</span>
+<span class="sd">    :param kwargs: Passed to the exception.</span>
+
+<span class="sd">    .. versionadded:: 2.2</span>
+<span class="sd">        Calls ``current_app.aborter`` if available instead of always</span>
+<span class="sd">        using Werkzeug&#39;s default ``abort``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">current_app</span><span class="p">:</span>
+        <span class="n">current_app</span><span class="o">.</span><span class="n">aborter</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="n">_wz_abort</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">get_template_attribute</span><span class="p">(</span><span class="n">template_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">attribute</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Loads a macro (or variable) a template exports.  This can be used to</span>
+<span class="sd">    invoke a macro from within Python code.  If you for example have a</span>
+<span class="sd">    template named :file:`_cider.html` with the following contents:</span>
+
+<span class="sd">    .. sourcecode:: html+jinja</span>
+
+<span class="sd">       {% macro hello(name) %}Hello {{ name }}!{% endmacro %}</span>
+
+<span class="sd">    You can access this from Python code like this::</span>
+
+<span class="sd">        hello = get_template_attribute(&#39;_cider.html&#39;, &#39;hello&#39;)</span>
+<span class="sd">        return hello(&#39;World&#39;)</span>
+
+<span class="sd">    .. versionadded:: 0.2</span>
+
+<span class="sd">    :param template_name: the name of the template</span>
+<span class="sd">    :param attribute: the name of the variable of macro to access</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">current_app</span><span class="o">.</span><span class="n">jinja_env</span><span class="o">.</span><span class="n">get_template</span><span class="p">(</span><span class="n">template_name</span><span class="p">)</span><span class="o">.</span><span class="n">module</span><span class="p">,</span> <span class="n">attribute</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">flash</span><span class="p">(</span><span class="n">message</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">category</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;message&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Flashes a message to the next request.  In order to remove the</span>
+<span class="sd">    flashed message from the session and to display it to the user,</span>
+<span class="sd">    the template has to call :func:`get_flashed_messages`.</span>
+
+<span class="sd">    .. versionchanged:: 0.3</span>
+<span class="sd">       `category` parameter added.</span>
+
+<span class="sd">    :param message: the message to be flashed.</span>
+<span class="sd">    :param category: the category for the message.  The following values</span>
+<span class="sd">                     are recommended: ``&#39;message&#39;`` for any kind of message,</span>
+<span class="sd">                     ``&#39;error&#39;`` for errors, ``&#39;info&#39;`` for information</span>
+<span class="sd">                     messages and ``&#39;warning&#39;`` for warnings.  However any</span>
+<span class="sd">                     kind of string can be used as category.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Original implementation:</span>
+    <span class="c1">#</span>
+    <span class="c1">#     session.setdefault(&#39;_flashes&#39;, []).append((category, message))</span>
+    <span class="c1">#</span>
+    <span class="c1"># This assumed that changes made to mutable structures in the session are</span>
+    <span class="c1"># always in sync with the session object, which is not true for session</span>
+    <span class="c1"># implementations that use external storage for keeping their keys/values.</span>
+    <span class="n">flashes</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;_flashes&quot;</span><span class="p">,</span> <span class="p">[])</span>
+    <span class="n">flashes</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">category</span><span class="p">,</span> <span class="n">message</span><span class="p">))</span>
+    <span class="n">session</span><span class="p">[</span><span class="s2">&quot;_flashes&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">flashes</span>
+    <span class="n">message_flashed</span><span class="o">.</span><span class="n">send</span><span class="p">(</span>
+        <span class="n">current_app</span><span class="o">.</span><span class="n">_get_current_object</span><span class="p">(),</span>  <span class="c1"># type: ignore</span>
+        <span class="n">message</span><span class="o">=</span><span class="n">message</span><span class="p">,</span>
+        <span class="n">category</span><span class="o">=</span><span class="n">category</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">get_flashed_messages</span><span class="p">(</span>
+    <span class="n">with_categories</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">category_filter</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">()</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pulls all flashed messages from the session and returns them.</span>
+<span class="sd">    Further calls in the same request to the function will return</span>
+<span class="sd">    the same messages.  By default just the messages are returned,</span>
+<span class="sd">    but when `with_categories` is set to ``True``, the return value will</span>
+<span class="sd">    be a list of tuples in the form ``(category, message)`` instead.</span>
+
+<span class="sd">    Filter the flashed messages to one or more categories by providing those</span>
+<span class="sd">    categories in `category_filter`.  This allows rendering categories in</span>
+<span class="sd">    separate html blocks.  The `with_categories` and `category_filter`</span>
+<span class="sd">    arguments are distinct:</span>
+
+<span class="sd">    * `with_categories` controls whether categories are returned with message</span>
+<span class="sd">      text (``True`` gives a tuple, where ``False`` gives just the message text).</span>
+<span class="sd">    * `category_filter` filters the messages down to only those matching the</span>
+<span class="sd">      provided categories.</span>
+
+<span class="sd">    See :doc:`/patterns/flashing` for examples.</span>
+
+<span class="sd">    .. versionchanged:: 0.3</span>
+<span class="sd">       `with_categories` parameter added.</span>
+
+<span class="sd">    .. versionchanged:: 0.9</span>
+<span class="sd">        `category_filter` parameter added.</span>
+
+<span class="sd">    :param with_categories: set to ``True`` to also receive categories.</span>
+<span class="sd">    :param category_filter: filter of categories to limit return values.  Only</span>
+<span class="sd">                            categories in the list will be returned.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">flashes</span> <span class="o">=</span> <span class="n">request_ctx</span><span class="o">.</span><span class="n">flashes</span>
+    <span class="k">if</span> <span class="n">flashes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">flashes</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;_flashes&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="s2">&quot;_flashes&quot;</span> <span class="ow">in</span> <span class="n">session</span> <span class="k">else</span> <span class="p">[]</span>
+        <span class="n">request_ctx</span><span class="o">.</span><span class="n">flashes</span> <span class="o">=</span> <span class="n">flashes</span>
+    <span class="k">if</span> <span class="n">category_filter</span><span class="p">:</span>
+        <span class="n">flashes</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">filter</span><span class="p">(</span><span class="k">lambda</span> <span class="n">f</span><span class="p">:</span> <span class="n">f</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="ow">in</span> <span class="n">category_filter</span><span class="p">,</span> <span class="n">flashes</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">with_categories</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">flashes</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">flashes</span>
+
+
+<span class="k">def</span> <span class="nf">_prepare_send_file_kwargs</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;max_age&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;max_age&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">current_app</span><span class="o">.</span><span class="n">get_send_file_max_age</span>
+
+    <span class="n">kwargs</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+        <span class="n">environ</span><span class="o">=</span><span class="n">request</span><span class="o">.</span><span class="n">environ</span><span class="p">,</span>
+        <span class="n">use_x_sendfile</span><span class="o">=</span><span class="n">current_app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;USE_X_SENDFILE&quot;</span><span class="p">],</span>
+        <span class="n">response_class</span><span class="o">=</span><span class="n">current_app</span><span class="o">.</span><span class="n">response_class</span><span class="p">,</span>
+        <span class="n">_root_path</span><span class="o">=</span><span class="n">current_app</span><span class="o">.</span><span class="n">root_path</span><span class="p">,</span>  <span class="c1"># type: ignore</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">kwargs</span>
+
+
+<span class="k">def</span> <span class="nf">send_file</span><span class="p">(</span>
+    <span class="n">path_or_file</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">BinaryIO</span><span class="p">],</span>
+    <span class="n">mimetype</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">as_attachment</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">download_name</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">conditional</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">etag</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">last_modified</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="n">datetime</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_age</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span>
+        <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[[</span><span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]]]</span>
+    <span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Response&quot;</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Send the contents of a file to the client.</span>
+
+<span class="sd">    The first argument can be a file path or a file-like object. Paths</span>
+<span class="sd">    are preferred in most cases because Werkzeug can manage the file and</span>
+<span class="sd">    get extra information from the path. Passing a file-like object</span>
+<span class="sd">    requires that the file is opened in binary mode, and is mostly</span>
+<span class="sd">    useful when building a file in memory with :class:`io.BytesIO`.</span>
+
+<span class="sd">    Never pass file paths provided by a user. The path is assumed to be</span>
+<span class="sd">    trusted, so a user could craft a path to access a file you didn&#39;t</span>
+<span class="sd">    intend. Use :func:`send_from_directory` to safely serve</span>
+<span class="sd">    user-requested paths from within a directory.</span>
+
+<span class="sd">    If the WSGI server sets a ``file_wrapper`` in ``environ``, it is</span>
+<span class="sd">    used, otherwise Werkzeug&#39;s built-in wrapper is used. Alternatively,</span>
+<span class="sd">    if the HTTP server supports ``X-Sendfile``, configuring Flask with</span>
+<span class="sd">    ``USE_X_SENDFILE = True`` will tell the server to send the given</span>
+<span class="sd">    path, which is much more efficient than reading it in Python.</span>
+
+<span class="sd">    :param path_or_file: The path to the file to send, relative to the</span>
+<span class="sd">        current working directory if a relative path is given.</span>
+<span class="sd">        Alternatively, a file-like object opened in binary mode. Make</span>
+<span class="sd">        sure the file pointer is seeked to the start of the data.</span>
+<span class="sd">    :param mimetype: The MIME type to send for the file. If not</span>
+<span class="sd">        provided, it will try to detect it from the file name.</span>
+<span class="sd">    :param as_attachment: Indicate to a browser that it should offer to</span>
+<span class="sd">        save the file instead of displaying it.</span>
+<span class="sd">    :param download_name: The default name browsers will use when saving</span>
+<span class="sd">        the file. Defaults to the passed file name.</span>
+<span class="sd">    :param conditional: Enable conditional and range responses based on</span>
+<span class="sd">        request headers. Requires passing a file path and ``environ``.</span>
+<span class="sd">    :param etag: Calculate an ETag for the file, which requires passing</span>
+<span class="sd">        a file path. Can also be a string to use instead.</span>
+<span class="sd">    :param last_modified: The last modified time to send for the file,</span>
+<span class="sd">        in seconds. If not provided, it will try to detect it from the</span>
+<span class="sd">        file path.</span>
+<span class="sd">    :param max_age: How long the client should cache the file, in</span>
+<span class="sd">        seconds. If set, ``Cache-Control`` will be ``public``, otherwise</span>
+<span class="sd">        it will be ``no-cache`` to prefer conditional caching.</span>
+
+<span class="sd">    .. versionchanged:: 2.0</span>
+<span class="sd">        ``download_name`` replaces the ``attachment_filename``</span>
+<span class="sd">        parameter. If ``as_attachment=False``, it is passed with</span>
+<span class="sd">        ``Content-Disposition: inline`` instead.</span>
+
+<span class="sd">    .. versionchanged:: 2.0</span>
+<span class="sd">        ``max_age`` replaces the ``cache_timeout`` parameter.</span>
+<span class="sd">        ``conditional`` is enabled and ``max_age`` is not set by</span>
+<span class="sd">        default.</span>
+
+<span class="sd">    .. versionchanged:: 2.0</span>
+<span class="sd">        ``etag`` replaces the ``add_etags`` parameter. It can be a</span>
+<span class="sd">        string to use instead of generating one.</span>
+
+<span class="sd">    .. versionchanged:: 2.0</span>
+<span class="sd">        Passing a file-like object that inherits from</span>
+<span class="sd">        :class:`~io.TextIOBase` will raise a :exc:`ValueError` rather</span>
+<span class="sd">        than sending an empty file.</span>
+
+<span class="sd">    .. versionadded:: 2.0</span>
+<span class="sd">        Moved the implementation to Werkzeug. This is now a wrapper to</span>
+<span class="sd">        pass some Flask-specific arguments.</span>
+
+<span class="sd">    .. versionchanged:: 1.1</span>
+<span class="sd">        ``filename`` may be a :class:`~os.PathLike` object.</span>
+
+<span class="sd">    .. versionchanged:: 1.1</span>
+<span class="sd">        Passing a :class:`~io.BytesIO` object supports range requests.</span>
+
+<span class="sd">    .. versionchanged:: 1.0.3</span>
+<span class="sd">        Filenames are encoded with ASCII instead of Latin-1 for broader</span>
+<span class="sd">        compatibility with WSGI servers.</span>
+
+<span class="sd">    .. versionchanged:: 1.0</span>
+<span class="sd">        UTF-8 filenames as specified in :rfc:`2231` are supported.</span>
+
+<span class="sd">    .. versionchanged:: 0.12</span>
+<span class="sd">        The filename is no longer automatically inferred from file</span>
+<span class="sd">        objects. If you want to use automatic MIME and etag support,</span>
+<span class="sd">        pass a filename via ``filename_or_fp`` or</span>
+<span class="sd">        ``attachment_filename``.</span>
+
+<span class="sd">    .. versionchanged:: 0.12</span>
+<span class="sd">        ``attachment_filename`` is preferred over ``filename`` for MIME</span>
+<span class="sd">        detection.</span>
+
+<span class="sd">    .. versionchanged:: 0.9</span>
+<span class="sd">        ``cache_timeout`` defaults to</span>
+<span class="sd">        :meth:`Flask.get_send_file_max_age`.</span>
+
+<span class="sd">    .. versionchanged:: 0.7</span>
+<span class="sd">        MIME guessing and etag support for file-like objects was</span>
+<span class="sd">        deprecated because it was unreliable. Pass a filename if you are</span>
+<span class="sd">        able to, otherwise attach an etag yourself.</span>
+
+<span class="sd">    .. versionchanged:: 0.5</span>
+<span class="sd">        The ``add_etags``, ``cache_timeout`` and ``conditional``</span>
+<span class="sd">        parameters were added. The default behavior is to add etags.</span>
+
+<span class="sd">    .. versionadded:: 0.2</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">werkzeug</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">send_file</span><span class="p">(</span>  <span class="c1"># type: ignore[return-value]</span>
+        <span class="o">**</span><span class="n">_prepare_send_file_kwargs</span><span class="p">(</span>
+            <span class="n">path_or_file</span><span class="o">=</span><span class="n">path_or_file</span><span class="p">,</span>
+            <span class="n">environ</span><span class="o">=</span><span class="n">request</span><span class="o">.</span><span class="n">environ</span><span class="p">,</span>
+            <span class="n">mimetype</span><span class="o">=</span><span class="n">mimetype</span><span class="p">,</span>
+            <span class="n">as_attachment</span><span class="o">=</span><span class="n">as_attachment</span><span class="p">,</span>
+            <span class="n">download_name</span><span class="o">=</span><span class="n">download_name</span><span class="p">,</span>
+            <span class="n">conditional</span><span class="o">=</span><span class="n">conditional</span><span class="p">,</span>
+            <span class="n">etag</span><span class="o">=</span><span class="n">etag</span><span class="p">,</span>
+            <span class="n">last_modified</span><span class="o">=</span><span class="n">last_modified</span><span class="p">,</span>
+            <span class="n">max_age</span><span class="o">=</span><span class="n">max_age</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">send_from_directory</span><span class="p">(</span>
+    <span class="n">directory</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>
+    <span class="n">path</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Union</span><span class="p">[</span><span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Response&quot;</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Send a file from within a directory using :func:`send_file`.</span>
+
+<span class="sd">    .. code-block:: python</span>
+
+<span class="sd">        @app.route(&quot;/uploads/&lt;path:name&gt;&quot;)</span>
+<span class="sd">        def download_file(name):</span>
+<span class="sd">            return send_from_directory(</span>
+<span class="sd">                app.config[&#39;UPLOAD_FOLDER&#39;], name, as_attachment=True</span>
+<span class="sd">            )</span>
+
+<span class="sd">    This is a secure way to serve files from a folder, such as static</span>
+<span class="sd">    files or uploads. Uses :func:`~werkzeug.security.safe_join` to</span>
+<span class="sd">    ensure the path coming from the client is not maliciously crafted to</span>
+<span class="sd">    point outside the specified directory.</span>
+
+<span class="sd">    If the final path does not point to an existing regular file,</span>
+<span class="sd">    raises a 404 :exc:`~werkzeug.exceptions.NotFound` error.</span>
+
+<span class="sd">    :param directory: The directory that ``path`` must be located under,</span>
+<span class="sd">        relative to the current application&#39;s root path.</span>
+<span class="sd">    :param path: The path to the file to send, relative to</span>
+<span class="sd">        ``directory``.</span>
+<span class="sd">    :param kwargs: Arguments to pass to :func:`send_file`.</span>
+
+<span class="sd">    .. versionchanged:: 2.0</span>
+<span class="sd">        ``path`` replaces the ``filename`` parameter.</span>
+
+<span class="sd">    .. versionadded:: 2.0</span>
+<span class="sd">        Moved the implementation to Werkzeug. This is now a wrapper to</span>
+<span class="sd">        pass some Flask-specific arguments.</span>
+
+<span class="sd">    .. versionadded:: 0.5</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">werkzeug</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">send_from_directory</span><span class="p">(</span>  <span class="c1"># type: ignore[return-value]</span>
+        <span class="n">directory</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="o">**</span><span class="n">_prepare_send_file_kwargs</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">get_root_path</span><span class="p">(</span><span class="n">import_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Find the root path of a package, or the path that contains a</span>
+<span class="sd">    module. If it cannot be found, returns the current working</span>
+<span class="sd">    directory.</span>
+
+<span class="sd">    Not to be confused with the value returned by :func:`find_package`.</span>
+
+<span class="sd">    :meta private:</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Module already imported and has a file attribute. Use that first.</span>
+    <span class="n">mod</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">modules</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">import_name</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">mod</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">mod</span><span class="p">,</span> <span class="s2">&quot;__file__&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">mod</span><span class="o">.</span><span class="vm">__file__</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">mod</span><span class="o">.</span><span class="vm">__file__</span><span class="p">))</span>
+
+    <span class="c1"># Next attempt: check the loader.</span>
+    <span class="n">loader</span> <span class="o">=</span> <span class="n">pkgutil</span><span class="o">.</span><span class="n">get_loader</span><span class="p">(</span><span class="n">import_name</span><span class="p">)</span>
+
+    <span class="c1"># Loader does not exist or we&#39;re referring to an unloaded main</span>
+    <span class="c1"># module or a main module without path (interactive sessions), go</span>
+    <span class="c1"># with the current working directory.</span>
+    <span class="k">if</span> <span class="n">loader</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">import_name</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">getcwd</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">loader</span><span class="p">,</span> <span class="s2">&quot;get_filename&quot;</span><span class="p">):</span>
+        <span class="n">filepath</span> <span class="o">=</span> <span class="n">loader</span><span class="o">.</span><span class="n">get_filename</span><span class="p">(</span><span class="n">import_name</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Fall back to imports.</span>
+        <span class="nb">__import__</span><span class="p">(</span><span class="n">import_name</span><span class="p">)</span>
+        <span class="n">mod</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">modules</span><span class="p">[</span><span class="n">import_name</span><span class="p">]</span>
+        <span class="n">filepath</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">mod</span><span class="p">,</span> <span class="s2">&quot;__file__&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="c1"># If we don&#39;t have a file path it might be because it is a</span>
+        <span class="c1"># namespace package. In this case pick the root path from the</span>
+        <span class="c1"># first module that is contained in the package.</span>
+        <span class="k">if</span> <span class="n">filepath</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="s2">&quot;No root path can be found for the provided module&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot; </span><span class="si">{</span><span class="n">import_name</span><span class="si">!r}</span><span class="s2">. This can happen because the module&quot;</span>
+                <span class="s2">&quot; came from an import hook that does not provide file&quot;</span>
+                <span class="s2">&quot; name information or because it&#39;s a namespace package.&quot;</span>
+                <span class="s2">&quot; In this case the root path needs to be explicitly&quot;</span>
+                <span class="s2">&quot; provided.&quot;</span>
+            <span class="p">)</span>
+
+    <span class="c1"># filepath is import_name.py for a module, or __init__.py for a package.</span>
+    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">filepath</span><span class="p">))</span>
+
+
+<span class="k">class</span> <span class="nc">locked_cached_property</span><span class="p">(</span><span class="n">werkzeug</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">cached_property</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A :func:`property` that is only evaluated once. Like</span>
+<span class="sd">    :class:`werkzeug.utils.cached_property` except access uses a lock</span>
+<span class="sd">    for thread safety.</span>
+
+<span class="sd">    .. versionchanged:: 2.0</span>
+<span class="sd">        Inherits from Werkzeug&#39;s ``cached_property`` (and ``property``).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">fget</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[[</span><span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">],</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">],</span>
+        <span class="n">name</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">doc</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">fget</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="o">=</span><span class="n">doc</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lock</span> <span class="o">=</span> <span class="n">RLock</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="nb">object</span><span class="p">,</span> <span class="nb">type</span><span class="p">:</span> <span class="nb">type</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>  <span class="c1"># type: ignore</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__get__</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">type</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="nb">object</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+            <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__set__</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__delete__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+            <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__delete__</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">is_ip</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Determine if the given string is an IP address.</span>
+
+<span class="sd">    :param value: value to check</span>
+<span class="sd">    :type value: str</span>
+
+<span class="sd">    :return: True if string is an IP address</span>
+<span class="sd">    :rtype: bool</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">family</span> <span class="ow">in</span> <span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">AF_INET6</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">socket</span><span class="o">.</span><span class="n">inet_pton</span><span class="p">(</span><span class="n">family</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">OSError</span><span class="p">:</span>
+            <span class="k">pass</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">return</span> <span class="kc">False</span>
+
+
+<span class="nd">@lru_cache</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">_split_blueprint_path</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="n">out</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">name</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="s2">&quot;.&quot;</span> <span class="ow">in</span> <span class="n">name</span><span class="p">:</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">_split_blueprint_path</span><span class="p">(</span><span class="n">name</span><span class="o">.</span><span class="n">rpartition</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]))</span>
+
+    <span class="k">return</span> <span class="n">out</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">RaceMaster</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Piotr Jałocha & Mateusz Kotula.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.0.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

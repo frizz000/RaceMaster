@@ -11,10 +11,6 @@ class Camera:
     def __init__(self, sensitivity):
         self.pngName = "../background.png"
         self.sensitivity = sensitivity
-
-        # for i in range(0, 10):
-        #     print(i, " ", cv2.VideoCapture(i).isOpened())
-        #
         self.camera = cv2.VideoCapture(0)
 
     def captureBackground(self):
@@ -38,10 +34,10 @@ class Camera:
 
     def readTime(self):
         """
-        Core function of this class. Method takes a frame compares it with background. If movement is detected method
-        measure time and returns it when user preses 'q' to quit.
-        :return: Measured time from first detected movement
-            to the second detected movement min. 3 seconds after the first one.
+        Core function of this class. Method takes a frame, compares it with the background. If movement is detected, the
+        method measures time and returns it when the user presses 'q' to quit.
+
+        :return: Measured time from first detected movement to the second detected movement min. 3 seconds after the first one.
         """
         startTime = None
         runTime = None

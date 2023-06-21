@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>flask.ctx &#8212; RaceMaster 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/sphinx_highlight.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for flask.ctx</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">contextvars</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">typing</span> <span class="k">as</span> <span class="nn">t</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">update_wrapper</span>
+<span class="kn">from</span> <span class="nn">types</span> <span class="kn">import</span> <span class="n">TracebackType</span>
+
+<span class="kn">from</span> <span class="nn">werkzeug.exceptions</span> <span class="kn">import</span> <span class="n">HTTPException</span>
+
+<span class="kn">from</span> <span class="nn">.</span> <span class="kn">import</span> <span class="n">typing</span> <span class="k">as</span> <span class="n">ft</span>
+<span class="kn">from</span> <span class="nn">.globals</span> <span class="kn">import</span> <span class="n">_cv_app</span>
+<span class="kn">from</span> <span class="nn">.globals</span> <span class="kn">import</span> <span class="n">_cv_request</span>
+<span class="kn">from</span> <span class="nn">.signals</span> <span class="kn">import</span> <span class="n">appcontext_popped</span>
+<span class="kn">from</span> <span class="nn">.signals</span> <span class="kn">import</span> <span class="n">appcontext_pushed</span>
+
+<span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">TYPE_CHECKING</span><span class="p">:</span>  <span class="c1"># pragma: no cover</span>
+    <span class="kn">from</span> <span class="nn">.app</span> <span class="kn">import</span> <span class="n">Flask</span>
+    <span class="kn">from</span> <span class="nn">.sessions</span> <span class="kn">import</span> <span class="n">SessionMixin</span>
+    <span class="kn">from</span> <span class="nn">.wrappers</span> <span class="kn">import</span> <span class="n">Request</span>
+
+
+<span class="c1"># a singleton sentinel value for parameter defaults</span>
+<span class="n">_sentinel</span> <span class="o">=</span> <span class="nb">object</span><span class="p">()</span>
+
+
+<span class="k">class</span> <span class="nc">_AppCtxGlobals</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A plain object. Used as a namespace for storing data during an</span>
+<span class="sd">    application context.</span>
+
+<span class="sd">    Creating an app context automatically creates this object, which is</span>
+<span class="sd">    made available as the :data:`g` proxy.</span>
+
+<span class="sd">    .. describe:: &#39;key&#39; in g</span>
+
+<span class="sd">        Check whether an attribute is present.</span>
+
+<span class="sd">        .. versionadded:: 0.10</span>
+
+<span class="sd">    .. describe:: iter(g)</span>
+
+<span class="sd">        Return an iterator over the attribute names.</span>
+
+<span class="sd">        .. versionadded:: 0.10</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Define attr methods to let mypy know this is a namespace object</span>
+    <span class="c1"># that has arbitrary attributes.</span>
+
+    <span class="k">def</span> <span class="fm">__getattr__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+        <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="kn">from</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="fm">__setattr__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="k">def</span> <span class="fm">__delattr__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+        <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="kn">from</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get an attribute by name, or a default value. Like</span>
+<span class="sd">        :meth:`dict.get`.</span>
+
+<span class="sd">        :param name: Name of attribute to get.</span>
+<span class="sd">        :param default: Value to return if the attribute is not present.</span>
+
+<span class="sd">        .. versionadded:: 0.10</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">default</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">pop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span> <span class="o">=</span> <span class="n">_sentinel</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get and remove an attribute by name. Like :meth:`dict.pop`.</span>
+
+<span class="sd">        :param name: Name of attribute to pop.</span>
+<span class="sd">        :param default: Value to return if the attribute is not present,</span>
+<span class="sd">            instead of raising a ``KeyError``.</span>
+
+<span class="sd">        .. versionadded:: 0.11</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">default</span> <span class="ow">is</span> <span class="n">_sentinel</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">default</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">setdefault</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the value of an attribute if it is present, otherwise</span>
+<span class="sd">        set and return a default value. Like :meth:`dict.setdefault`.</span>
+
+<span class="sd">        :param name: Name of attribute to get.</span>
+<span class="sd">        :param default: Value to set and return if the attribute is not</span>
+<span class="sd">            present.</span>
+
+<span class="sd">        .. versionadded:: 0.11</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">default</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__contains__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">item</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span>
+
+    <span class="k">def</span> <span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Iterator</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="nb">iter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">ctx</span> <span class="o">=</span> <span class="n">_cv_app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">ctx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;flask.g of &#39;</span><span class="si">{</span><span class="n">ctx</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;&gt;&quot;</span>
+        <span class="k">return</span> <span class="nb">object</span><span class="o">.</span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">after_this_request</span><span class="p">(</span><span class="n">f</span><span class="p">:</span> <span class="n">ft</span><span class="o">.</span><span class="n">AfterRequestCallable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ft</span><span class="o">.</span><span class="n">AfterRequestCallable</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Executes a function after this request.  This is useful to modify</span>
+<span class="sd">    response objects.  The function is passed the response object and has</span>
+<span class="sd">    to return the same or a new one.</span>
+
+<span class="sd">    Example::</span>
+
+<span class="sd">        @app.route(&#39;/&#39;)</span>
+<span class="sd">        def index():</span>
+<span class="sd">            @after_this_request</span>
+<span class="sd">            def add_header(response):</span>
+<span class="sd">                response.headers[&#39;X-Foo&#39;] = &#39;Parachute&#39;</span>
+<span class="sd">                return response</span>
+<span class="sd">            return &#39;Hello World!&#39;</span>
+
+<span class="sd">    This is more useful if a function other than the view function wants to</span>
+<span class="sd">    modify a response.  For instance think of a decorator that wants to add</span>
+<span class="sd">    some headers without converting the return value into a response object.</span>
+
+<span class="sd">    .. versionadded:: 0.9</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">_cv_request</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">ctx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="s2">&quot;&#39;after_this_request&#39; can only be used when a request&quot;</span>
+            <span class="s2">&quot; context is active, such as in a view function.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">ctx</span><span class="o">.</span><span class="n">_after_request_functions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">f</span>
+
+
+<span class="k">def</span> <span class="nf">copy_current_request_context</span><span class="p">(</span><span class="n">f</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A helper function that decorates a function to retain the current</span>
+<span class="sd">    request context.  This is useful when working with greenlets.  The moment</span>
+<span class="sd">    the function is decorated a copy of the request context is created and</span>
+<span class="sd">    then pushed when the function is called.  The current session is also</span>
+<span class="sd">    included in the copied request context.</span>
+
+<span class="sd">    Example::</span>
+
+<span class="sd">        import gevent</span>
+<span class="sd">        from flask import copy_current_request_context</span>
+
+<span class="sd">        @app.route(&#39;/&#39;)</span>
+<span class="sd">        def index():</span>
+<span class="sd">            @copy_current_request_context</span>
+<span class="sd">            def do_some_work():</span>
+<span class="sd">                # do some work here, it can access flask.request or</span>
+<span class="sd">                # flask.session like you would otherwise in the view function.</span>
+<span class="sd">                ...</span>
+<span class="sd">            gevent.spawn(do_some_work)</span>
+<span class="sd">            return &#39;Regular response&#39;</span>
+
+<span class="sd">    .. versionadded:: 0.10</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">_cv_request</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">ctx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="s2">&quot;&#39;copy_current_request_context&#39; can only be used when a&quot;</span>
+            <span class="s2">&quot; request context is active, such as in a view function.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">wrapper</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">ctx</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">ctx</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">ensure_sync</span><span class="p">(</span><span class="n">f</span><span class="p">)(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">update_wrapper</span><span class="p">(</span><span class="n">wrapper</span><span class="p">,</span> <span class="n">f</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">has_request_context</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;If you have code that wants to test if a request context is there or</span>
+<span class="sd">    not this function can be used.  For instance, you may want to take advantage</span>
+<span class="sd">    of request information if the request object is available, but fail</span>
+<span class="sd">    silently if it is unavailable.</span>
+
+<span class="sd">    ::</span>
+
+<span class="sd">        class User(db.Model):</span>
+
+<span class="sd">            def __init__(self, username, remote_addr=None):</span>
+<span class="sd">                self.username = username</span>
+<span class="sd">                if remote_addr is None and has_request_context():</span>
+<span class="sd">                    remote_addr = request.remote_addr</span>
+<span class="sd">                self.remote_addr = remote_addr</span>
+
+<span class="sd">    Alternatively you can also just test any of the context bound objects</span>
+<span class="sd">    (such as :class:`request` or :class:`g`) for truthness::</span>
+
+<span class="sd">        class User(db.Model):</span>
+
+<span class="sd">            def __init__(self, username, remote_addr=None):</span>
+<span class="sd">                self.username = username</span>
+<span class="sd">                if remote_addr is None and request:</span>
+<span class="sd">                    remote_addr = request.remote_addr</span>
+<span class="sd">                self.remote_addr = remote_addr</span>
+
+<span class="sd">    .. versionadded:: 0.7</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_cv_request</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+
+<span class="k">def</span> <span class="nf">has_app_context</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Works like :func:`has_request_context` but for the application</span>
+<span class="sd">    context.  You can also just do a boolean check on the</span>
+<span class="sd">    :data:`current_app` object instead.</span>
+
+<span class="sd">    .. versionadded:: 0.9</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_cv_app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+
+<span class="k">class</span> <span class="nc">AppContext</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The app context contains application-specific information. An app</span>
+<span class="sd">    context is created and pushed at the beginning of each request if</span>
+<span class="sd">    one is not already active. An app context is also pushed when</span>
+<span class="sd">    running CLI commands.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span> <span class="o">=</span> <span class="n">app</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">url_adapter</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">create_url_adapter</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">g</span><span class="p">:</span> <span class="n">_AppCtxGlobals</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">app_ctx_globals_class</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cv_tokens</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">contextvars</span><span class="o">.</span><span class="n">Token</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">push</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Binds the app context to the current context.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cv_tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_cv_app</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="bp">self</span><span class="p">))</span>
+        <span class="n">appcontext_pushed</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">pop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="ne">BaseException</span><span class="p">]</span> <span class="o">=</span> <span class="n">_sentinel</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># type: ignore</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pops the app context.&quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cv_tokens</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">exc</span> <span class="ow">is</span> <span class="n">_sentinel</span><span class="p">:</span>
+                    <span class="n">exc</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">exc_info</span><span class="p">()[</span><span class="mi">1</span><span class="p">]</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">do_teardown_appcontext</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">ctx</span> <span class="o">=</span> <span class="n">_cv_app</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+            <span class="n">_cv_app</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cv_tokens</span><span class="o">.</span><span class="n">pop</span><span class="p">())</span>
+
+        <span class="k">if</span> <span class="n">ctx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">AssertionError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Popped wrong app context. (</span><span class="si">{</span><span class="n">ctx</span><span class="si">!r}</span><span class="s2"> instead of </span><span class="si">{</span><span class="bp">self</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+            <span class="p">)</span>
+
+        <span class="n">appcontext_popped</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;AppContext&quot;</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">push</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">exc_type</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">type</span><span class="p">],</span>
+        <span class="n">exc_value</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="ne">BaseException</span><span class="p">],</span>
+        <span class="n">tb</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">TracebackType</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">exc_value</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">RequestContext</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The request context contains per-request information. The Flask</span>
+<span class="sd">    app creates and pushes it at the beginning of the request, then pops</span>
+<span class="sd">    it at the end of the request. It will create the URL adapter and</span>
+<span class="sd">    request object for the WSGI environment provided.</span>
+
+<span class="sd">    Do not attempt to use this class directly, instead use</span>
+<span class="sd">    :meth:`~flask.Flask.test_request_context` and</span>
+<span class="sd">    :meth:`~flask.Flask.request_context` to create this object.</span>
+
+<span class="sd">    When the request context is popped, it will evaluate all the</span>
+<span class="sd">    functions registered on the application for teardown execution</span>
+<span class="sd">    (:meth:`~flask.Flask.teardown_request`).</span>
+
+<span class="sd">    The request context is automatically popped at the end of the</span>
+<span class="sd">    request. When using the interactive debugger, the context will be</span>
+<span class="sd">    restored so ``request`` is still accessible. Similarly, the test</span>
+<span class="sd">    client can preserve the context after the request ends. However,</span>
+<span class="sd">    teardown functions may already have closed some resources such as</span>
+<span class="sd">    database connections.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">,</span>
+        <span class="n">environ</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+        <span class="n">request</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;Request&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">session</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;SessionMixin&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span> <span class="o">=</span> <span class="n">app</span>
+        <span class="k">if</span> <span class="n">request</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">request</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">request_class</span><span class="p">(</span><span class="n">environ</span><span class="p">)</span>
+            <span class="n">request</span><span class="o">.</span><span class="n">json_module</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">json</span>  <span class="c1"># type: ignore[misc]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="p">:</span> <span class="n">Request</span> <span class="o">=</span> <span class="n">request</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">url_adapter</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">url_adapter</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">create_url_adapter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">HTTPException</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">routing_exception</span> <span class="o">=</span> <span class="n">e</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">flashes</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">session</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;SessionMixin&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">session</span>
+        <span class="c1"># Functions that should be executed after the request on the response</span>
+        <span class="c1"># object.  These will be called before the regular &quot;after_request&quot;</span>
+        <span class="c1"># functions.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_after_request_functions</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">ft</span><span class="o">.</span><span class="n">AfterRequestCallable</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cv_tokens</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">List</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="n">contextvars</span><span class="o">.</span><span class="n">Token</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">AppContext</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">copy</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;RequestContext&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Creates a copy of this request context with the same request object.</span>
+<span class="sd">        This can be used to move a request context to a different greenlet.</span>
+<span class="sd">        Because the actual request object is the same this cannot be used to</span>
+<span class="sd">        move a request context to a different thread unless access to the</span>
+<span class="sd">        request object is locked.</span>
+
+<span class="sd">        .. versionadded:: 0.10</span>
+
+<span class="sd">        .. versionchanged:: 1.1</span>
+<span class="sd">           The current session object is used instead of reloading the original</span>
+<span class="sd">           data. This prevents `flask.session` pointing to an out-of-date object.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="p">,</span>
+            <span class="n">environ</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">environ</span><span class="p">,</span>
+            <span class="n">request</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="p">,</span>
+            <span class="n">session</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">session</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">match_request</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Can be overridden by a subclass to hook into the matching</span>
+<span class="sd">        of the request.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">url_adapter</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">return_rule</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">url_rule</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">view_args</span> <span class="o">=</span> <span class="n">result</span>  <span class="c1"># type: ignore</span>
+        <span class="k">except</span> <span class="n">HTTPException</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">routing_exception</span> <span class="o">=</span> <span class="n">e</span>
+
+    <span class="k">def</span> <span class="nf">push</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Before we push the request context we have to ensure that there</span>
+        <span class="c1"># is an application context.</span>
+        <span class="n">app_ctx</span> <span class="o">=</span> <span class="n">_cv_app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">app_ctx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">app_ctx</span><span class="o">.</span><span class="n">app</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="p">:</span>
+            <span class="n">app_ctx</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">app_context</span><span class="p">()</span>
+            <span class="n">app_ctx</span><span class="o">.</span><span class="n">push</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">app_ctx</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cv_tokens</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">_cv_request</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="bp">self</span><span class="p">),</span> <span class="n">app_ctx</span><span class="p">))</span>
+
+        <span class="c1"># Open the session at the moment that the request context is available.</span>
+        <span class="c1"># This allows a custom open_session method to use the request context.</span>
+        <span class="c1"># Only open a new session if this is the first time the request was</span>
+        <span class="c1"># pushed, otherwise stream_with_context loses the session.</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">session</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">session_interface</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">session_interface</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">session</span> <span class="o">=</span> <span class="n">session_interface</span><span class="o">.</span><span class="n">open_session</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">session</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">session</span> <span class="o">=</span> <span class="n">session_interface</span><span class="o">.</span><span class="n">make_null_session</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="p">)</span>
+
+        <span class="c1"># Match the request URL after loading the session, so that the</span>
+        <span class="c1"># session is available in custom URL converters.</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">url_adapter</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">match_request</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">pop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="ne">BaseException</span><span class="p">]</span> <span class="o">=</span> <span class="n">_sentinel</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># type: ignore</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pops the request context and unbinds it by doing that.  This will</span>
+<span class="sd">        also trigger the execution of functions registered by the</span>
+<span class="sd">        :meth:`~flask.Flask.teardown_request` decorator.</span>
+
+<span class="sd">        .. versionchanged:: 0.9</span>
+<span class="sd">           Added the `exc` argument.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">clear_request</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cv_tokens</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">clear_request</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">exc</span> <span class="ow">is</span> <span class="n">_sentinel</span><span class="p">:</span>
+                    <span class="n">exc</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">exc_info</span><span class="p">()[</span><span class="mi">1</span><span class="p">]</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">do_teardown_request</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+
+                <span class="n">request_close</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="p">,</span> <span class="s2">&quot;close&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">request_close</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">request_close</span><span class="p">()</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">ctx</span> <span class="o">=</span> <span class="n">_cv_request</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+            <span class="n">token</span><span class="p">,</span> <span class="n">app_ctx</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cv_tokens</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+            <span class="n">_cv_request</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>
+
+            <span class="c1"># get rid of circular dependencies at the end of the request</span>
+            <span class="c1"># so that we don&#39;t require the GC to be active.</span>
+            <span class="k">if</span> <span class="n">clear_request</span><span class="p">:</span>
+                <span class="n">ctx</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;werkzeug.request&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+            <span class="k">if</span> <span class="n">app_ctx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">app_ctx</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">ctx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">self</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">AssertionError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;Popped wrong request context. (</span><span class="si">{</span><span class="n">ctx</span><span class="si">!r}</span><span class="s2"> instead of </span><span class="si">{</span><span class="bp">self</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+                <span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;RequestContext&quot;</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">push</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">exc_type</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">type</span><span class="p">],</span>
+        <span class="n">exc_value</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="ne">BaseException</span><span class="p">],</span>
+        <span class="n">tb</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">TracebackType</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">exc_value</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">url</span><span class="si">!r}</span><span class="s2">&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot; [</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="si">}</span><span class="s2">] of </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&gt;&quot;</span>
+        <span class="p">)</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">RaceMaster</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Piotr Jałocha & Mateusz Kotula.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.0.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

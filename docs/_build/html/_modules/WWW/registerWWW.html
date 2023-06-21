@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WWW.registerWWW &#8212; RaceMaster 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/sphinx_highlight.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for WWW.registerWWW</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">render_template</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">redirect</span>
+<span class="kn">import</span> <span class="nn">sqlite3</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">,</span> <span class="n">template_folder</span><span class="o">=</span><span class="s1">&#39;../templates&#39;</span><span class="p">,</span> <span class="n">static_folder</span><span class="o">=</span><span class="s1">&#39;../static&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="register"><a class="viewcode-back" href="../../index.html#WWW.registerWWW.register">[docs]</a><span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;GET&#39;</span><span class="p">,</span> <span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">register</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Metod to register new player to database</span>
+<span class="sd">    :param request:</span>
+<span class="sd">    :return:</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">&#39;../zawody.db&#39;</span><span class="p">)</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span> <span class="o">==</span> <span class="s1">&#39;POST&#39;</span><span class="p">:</span>
+        <span class="n">imie</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;imie&#39;</span><span class="p">]</span>
+        <span class="n">nazwisko</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;nazwisko&#39;</span><span class="p">]</span>
+        <span class="n">dataUrodzenia</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;dataUrodzenia&#39;</span><span class="p">]</span>
+        <span class="n">nrTelefonu</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;nrTelefonu&#39;</span><span class="p">]</span>
+        <span class="n">daneOpiekuna</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;daneOpiekuna&#39;</span><span class="p">]</span>
+        <span class="n">pojazd</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;pojazd&#39;</span><span class="p">]</span>
+        <span class="n">Kategoria_nazwa</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s1">&#39;Kategoria&#39;</span><span class="p">]</span>
+
+        <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT id FROM Kategoria WHERE nazwa=?&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">Kategoria_nazwa</span><span class="p">,))</span>
+        <span class="n">Kategoria_id</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">&#39;&#39;&#39;</span>
+<span class="s1">            INSERT INTO Zawodnik (imie, nazwisko, dataUrodzenia, nrTelefonu, daneOpiekuna, pojazd, Kategoria_id)</span>
+<span class="s1">            VALUES (?, ?, ?, ?, ?, ?, ?)</span>
+<span class="s1">        &#39;&#39;&#39;</span><span class="p">,</span> <span class="p">(</span><span class="n">imie</span><span class="p">,</span> <span class="n">nazwisko</span><span class="p">,</span> <span class="n">dataUrodzenia</span><span class="p">,</span> <span class="n">nrTelefonu</span><span class="p">,</span> <span class="n">daneOpiekuna</span><span class="p">,</span> <span class="n">pojazd</span><span class="p">,</span> <span class="n">Kategoria_id</span><span class="p">))</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">redirect</span><span class="p">(</span><span class="s1">&#39;https://www.youtube.com/watch?v=dQw4w9WgXcQ&#39;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT nazwa FROM Kategoria&quot;</span><span class="p">)</span>
+        <span class="n">kategorie</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">c</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()]</span>
+        <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s1">&#39;register.html&#39;</span><span class="p">,</span> <span class="n">kategorie</span><span class="o">=</span><span class="n">kategorie</span><span class="p">)</span></div>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">RaceMaster</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Piotr Jałocha & Mateusz Kotula.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.0.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

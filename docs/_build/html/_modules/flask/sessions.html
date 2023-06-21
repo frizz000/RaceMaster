@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>flask.sessions &#8212; RaceMaster 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/sphinx_highlight.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for flask.sessions</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">import</span> <span class="nn">typing</span> <span class="k">as</span> <span class="nn">t</span>
+<span class="kn">import</span> <span class="nn">warnings</span>
+<span class="kn">from</span> <span class="nn">collections.abc</span> <span class="kn">import</span> <span class="n">MutableMapping</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">timezone</span>
+
+<span class="kn">from</span> <span class="nn">itsdangerous</span> <span class="kn">import</span> <span class="n">BadSignature</span>
+<span class="kn">from</span> <span class="nn">itsdangerous</span> <span class="kn">import</span> <span class="n">URLSafeTimedSerializer</span>
+<span class="kn">from</span> <span class="nn">werkzeug.datastructures</span> <span class="kn">import</span> <span class="n">CallbackDict</span>
+
+<span class="kn">from</span> <span class="nn">.helpers</span> <span class="kn">import</span> <span class="n">is_ip</span>
+<span class="kn">from</span> <span class="nn">.json.tag</span> <span class="kn">import</span> <span class="n">TaggedJSONSerializer</span>
+
+<span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">TYPE_CHECKING</span><span class="p">:</span>  <span class="c1"># pragma: no cover</span>
+    <span class="kn">import</span> <span class="nn">typing_extensions</span> <span class="k">as</span> <span class="nn">te</span>
+    <span class="kn">from</span> <span class="nn">.app</span> <span class="kn">import</span> <span class="n">Flask</span>
+    <span class="kn">from</span> <span class="nn">.wrappers</span> <span class="kn">import</span> <span class="n">Request</span><span class="p">,</span> <span class="n">Response</span>
+
+
+<span class="k">class</span> <span class="nc">SessionMixin</span><span class="p">(</span><span class="n">MutableMapping</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Expands a basic dictionary with session attributes.&quot;&quot;&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">permanent</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;This reflects the ``&#39;_permanent&#39;`` key in the dict.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;_permanent&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+
+    <span class="nd">@permanent</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span> <span class="nf">permanent</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="p">[</span><span class="s2">&quot;_permanent&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+
+    <span class="c1">#: Some implementations can detect whether a session is newly</span>
+    <span class="c1">#: created, but that is not guaranteed. Use with caution. The mixin</span>
+    <span class="c1"># default is hard-coded ``False``.</span>
+    <span class="n">new</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="c1">#: Some implementations can detect changes to the session and set</span>
+    <span class="c1">#: this when that happens. The mixin default is hard coded to</span>
+    <span class="c1">#: ``True``.</span>
+    <span class="n">modified</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="c1">#: Some implementations can detect when session data is read or</span>
+    <span class="c1">#: written and set this when that happens. The mixin default is hard</span>
+    <span class="c1">#: coded to ``True``.</span>
+    <span class="n">accessed</span> <span class="o">=</span> <span class="kc">True</span>
+
+
+<span class="k">class</span> <span class="nc">SecureCookieSession</span><span class="p">(</span><span class="n">CallbackDict</span><span class="p">,</span> <span class="n">SessionMixin</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Base class for sessions based on signed cookies.</span>
+
+<span class="sd">    This session backend will set the :attr:`modified` and</span>
+<span class="sd">    :attr:`accessed` attributes. It cannot reliably track whether a</span>
+<span class="sd">    session is new (vs. empty), so :attr:`new` remains hard coded to</span>
+<span class="sd">    ``False``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1">#: When data is changed, this is set to ``True``. Only the session</span>
+    <span class="c1">#: dictionary itself is tracked; if the session contains mutable</span>
+    <span class="c1">#: data (for example a nested dict) then this must be set to</span>
+    <span class="c1">#: ``True`` manually when modifying that data. The session cookie</span>
+    <span class="c1">#: will only be written to the response if this is ``True``.</span>
+    <span class="n">modified</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="c1">#: When data is read or written, this is set to ``True``. Used by</span>
+    <span class="c1"># :class:`.SecureCookieSessionInterface` to add a ``Vary: Cookie``</span>
+    <span class="c1">#: header, which allows caching proxies to cache different pages for</span>
+    <span class="c1">#: different users.</span>
+    <span class="n">accessed</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">initial</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">def</span> <span class="nf">on_update</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">modified</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">accessed</span> <span class="o">=</span> <span class="kc">True</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">initial</span><span class="p">,</span> <span class="n">on_update</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">accessed</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__getitem__</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">accessed</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">default</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">setdefault</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">accessed</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">default</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">NullSession</span><span class="p">(</span><span class="n">SecureCookieSession</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Class used to generate nicer error messages if sessions are not</span>
+<span class="sd">    available.  Will still allow read-only access to the empty session</span>
+<span class="sd">    but fail on setting.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">_fail</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;te.NoReturn&quot;</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="s2">&quot;The session is unavailable because no secret &quot;</span>
+            <span class="s2">&quot;key was set.  Set the secret_key on the &quot;</span>
+            <span class="s2">&quot;application to something unique and secret.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="fm">__setitem__</span> <span class="o">=</span> <span class="fm">__delitem__</span> <span class="o">=</span> <span class="n">clear</span> <span class="o">=</span> <span class="n">pop</span> <span class="o">=</span> <span class="n">popitem</span> <span class="o">=</span> <span class="n">update</span> <span class="o">=</span> <span class="n">setdefault</span> <span class="o">=</span> <span class="n">_fail</span>  <span class="c1"># type: ignore # noqa: B950</span>
+    <span class="k">del</span> <span class="n">_fail</span>
+
+
+<span class="k">class</span> <span class="nc">SessionInterface</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The basic interface you have to implement in order to replace the</span>
+<span class="sd">    default session interface which uses werkzeug&#39;s securecookie</span>
+<span class="sd">    implementation.  The only methods you have to implement are</span>
+<span class="sd">    :meth:`open_session` and :meth:`save_session`, the others have</span>
+<span class="sd">    useful defaults which you don&#39;t need to change.</span>
+
+<span class="sd">    The session object returned by the :meth:`open_session` method has to</span>
+<span class="sd">    provide a dictionary like interface plus the properties and methods</span>
+<span class="sd">    from the :class:`SessionMixin`.  We recommend just subclassing a dict</span>
+<span class="sd">    and adding that mixin::</span>
+
+<span class="sd">        class Session(dict, SessionMixin):</span>
+<span class="sd">            pass</span>
+
+<span class="sd">    If :meth:`open_session` returns ``None`` Flask will call into</span>
+<span class="sd">    :meth:`make_null_session` to create a session that acts as replacement</span>
+<span class="sd">    if the session support cannot work because some requirement is not</span>
+<span class="sd">    fulfilled.  The default :class:`NullSession` class that is created</span>
+<span class="sd">    will complain that the secret key was not set.</span>
+
+<span class="sd">    To replace the session interface on an application all you have to do</span>
+<span class="sd">    is to assign :attr:`flask.Flask.session_interface`::</span>
+
+<span class="sd">        app = Flask(__name__)</span>
+<span class="sd">        app.session_interface = MySessionInterface()</span>
+
+<span class="sd">    Multiple requests with the same session may be sent and handled</span>
+<span class="sd">    concurrently. When implementing a new session interface, consider</span>
+<span class="sd">    whether reads or writes to the backing store must be synchronized.</span>
+<span class="sd">    There is no guarantee on the order in which the session for each</span>
+<span class="sd">    request is opened or saved, it will occur in the order that requests</span>
+<span class="sd">    begin and end processing.</span>
+
+<span class="sd">    .. versionadded:: 0.8</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1">#: :meth:`make_null_session` will look here for the class that should</span>
+    <span class="c1">#: be created when a null session is requested.  Likewise the</span>
+    <span class="c1">#: :meth:`is_null_session` method will perform a typecheck against</span>
+    <span class="c1">#: this type.</span>
+    <span class="n">null_session_class</span> <span class="o">=</span> <span class="n">NullSession</span>
+
+    <span class="c1">#: A flag that indicates if the session interface is pickle based.</span>
+    <span class="c1">#: This can be used by Flask extensions to make a decision in regards</span>
+    <span class="c1">#: to how to deal with the session object.</span>
+    <span class="c1">#:</span>
+    <span class="c1">#: .. versionadded:: 0.10</span>
+    <span class="n">pickle_based</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span> <span class="nf">make_null_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NullSession</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Creates a null session which acts as a replacement object if the</span>
+<span class="sd">        real session support could not be loaded due to a configuration</span>
+<span class="sd">        error.  This mainly aids the user experience because the job of the</span>
+<span class="sd">        null session is to still support lookup without complaining but</span>
+<span class="sd">        modifications are answered with a helpful error message of what</span>
+<span class="sd">        failed.</span>
+
+<span class="sd">        This creates an instance of :attr:`null_session_class` by default.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">null_session_class</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">is_null_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Checks if a given object is a null session.  Null sessions are</span>
+<span class="sd">        not asked to be saved.</span>
+
+<span class="sd">        This checks if the object is an instance of :attr:`null_session_class`</span>
+<span class="sd">        by default.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">null_session_class</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get_cookie_name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The name of the session cookie. Uses``app.config[&quot;SESSION_COOKIE_NAME&quot;]``.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_NAME&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">get_cookie_domain</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the domain that should be set for the session cookie.</span>
+
+<span class="sd">        Uses ``SESSION_COOKIE_DOMAIN`` if it is configured, otherwise</span>
+<span class="sd">        falls back to detecting the domain based on ``SERVER_NAME``.</span>
+
+<span class="sd">        Once detected (or if not set at all), ``SESSION_COOKIE_DOMAIN`` is</span>
+<span class="sd">        updated to avoid re-running the logic.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="n">rv</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_DOMAIN&quot;</span><span class="p">]</span>
+
+        <span class="c1"># set explicitly, or cached from SERVER_NAME detection</span>
+        <span class="c1"># if False, return None</span>
+        <span class="k">if</span> <span class="n">rv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">rv</span> <span class="k">if</span> <span class="n">rv</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="n">rv</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SERVER_NAME&quot;</span><span class="p">]</span>
+
+        <span class="c1"># server name not set, cache False to return none next time</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">rv</span><span class="p">:</span>
+            <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_DOMAIN&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+        <span class="c1"># chop off the port which is usually not supported by browsers</span>
+        <span class="c1"># remove any leading &#39;.&#39; since we&#39;ll add that later</span>
+        <span class="n">rv</span> <span class="o">=</span> <span class="n">rv</span><span class="o">.</span><span class="n">rsplit</span><span class="p">(</span><span class="s2">&quot;:&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">lstrip</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="s2">&quot;.&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">rv</span><span class="p">:</span>
+            <span class="c1"># Chrome doesn&#39;t allow names without a &#39;.&#39;. This should only</span>
+            <span class="c1"># come up with localhost. Hack around this by not setting</span>
+            <span class="c1"># the name, and show a warning.</span>
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">rv</span><span class="si">!r}</span><span class="s2"> is not a valid cookie domain, it must contain&quot;</span>
+                <span class="s2">&quot; a &#39;.&#39;. Add an entry to your hosts file, for example&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot; &#39;</span><span class="si">{</span><span class="n">rv</span><span class="si">}</span><span class="s2">.localdomain&#39;, and use that instead.&quot;</span>
+            <span class="p">)</span>
+            <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_DOMAIN&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+        <span class="n">ip</span> <span class="o">=</span> <span class="n">is_ip</span><span class="p">(</span><span class="n">rv</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">ip</span><span class="p">:</span>
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="s2">&quot;The session cookie domain is an IP address. This may not work&quot;</span>
+                <span class="s2">&quot; as intended in some browsers. Add an entry to your hosts&quot;</span>
+                <span class="s1">&#39; file, for example &quot;localhost.localdomain&quot;, and use that&#39;</span>
+                <span class="s2">&quot; instead.&quot;</span>
+            <span class="p">)</span>
+
+        <span class="c1"># if this is not an ip and app is mounted at the root, allow subdomain</span>
+        <span class="c1"># matching by adding a &#39;.&#39; prefix</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_cookie_path</span><span class="p">(</span><span class="n">app</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;/&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">ip</span><span class="p">:</span>
+            <span class="n">rv</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">rv</span><span class="si">}</span><span class="s2">&quot;</span>
+
+        <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_DOMAIN&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">rv</span>
+        <span class="k">return</span> <span class="n">rv</span>
+
+    <span class="k">def</span> <span class="nf">get_cookie_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns the path for which the cookie should be valid.  The</span>
+<span class="sd">        default implementation uses the value from the ``SESSION_COOKIE_PATH``</span>
+<span class="sd">        config var if it&#39;s set, and falls back to ``APPLICATION_ROOT`` or</span>
+<span class="sd">        uses ``/`` if it&#39;s ``None``.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_PATH&quot;</span><span class="p">]</span> <span class="ow">or</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;APPLICATION_ROOT&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">get_cookie_httponly</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns True if the session cookie should be httponly.  This</span>
+<span class="sd">        currently just returns the value of the ``SESSION_COOKIE_HTTPONLY``</span>
+<span class="sd">        config var.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_HTTPONLY&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">get_cookie_secure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns True if the cookie should be secure.  This currently</span>
+<span class="sd">        just returns the value of the ``SESSION_COOKIE_SECURE`` setting.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_SECURE&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">get_cookie_samesite</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return ``&#39;Strict&#39;`` or ``&#39;Lax&#39;`` if the cookie should use the</span>
+<span class="sd">        ``SameSite`` attribute. This currently just returns the value of</span>
+<span class="sd">        the :data:`SESSION_COOKIE_SAMESITE` setting.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_COOKIE_SAMESITE&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">get_expiration_time</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">,</span> <span class="n">session</span><span class="p">:</span> <span class="n">SessionMixin</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">datetime</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;A helper method that returns an expiration date for the session</span>
+<span class="sd">        or ``None`` if the session is linked to the browser session.  The</span>
+<span class="sd">        default implementation returns now + the permanent session</span>
+<span class="sd">        lifetime configured on the application.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">session</span><span class="o">.</span><span class="n">permanent</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span> <span class="o">+</span> <span class="n">app</span><span class="o">.</span><span class="n">permanent_session_lifetime</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">should_set_cookie</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">,</span> <span class="n">session</span><span class="p">:</span> <span class="n">SessionMixin</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Used by session backends to determine if a ``Set-Cookie`` header</span>
+<span class="sd">        should be set for this session cookie for this response. If the session</span>
+<span class="sd">        has been modified, the cookie is set. If the session is permanent and</span>
+<span class="sd">        the ``SESSION_REFRESH_EACH_REQUEST`` config is true, the cookie is</span>
+<span class="sd">        always set.</span>
+
+<span class="sd">        This check is usually skipped if the session was deleted.</span>
+
+<span class="sd">        .. versionadded:: 0.11</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="k">return</span> <span class="n">session</span><span class="o">.</span><span class="n">modified</span> <span class="ow">or</span> <span class="p">(</span>
+            <span class="n">session</span><span class="o">.</span><span class="n">permanent</span> <span class="ow">and</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;SESSION_REFRESH_EACH_REQUEST&quot;</span><span class="p">]</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">open_session</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="s2">&quot;Request&quot;</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">SessionMixin</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;This is called at the beginning of each request, after</span>
+<span class="sd">        pushing the request context, before matching the URL.</span>
+
+<span class="sd">        This must return an object which implements a dictionary-like</span>
+<span class="sd">        interface as well as the :class:`SessionMixin` interface.</span>
+
+<span class="sd">        This will return ``None`` to indicate that loading failed in</span>
+<span class="sd">        some way that is not immediately an error. The request</span>
+<span class="sd">        context will fall back to using :meth:`make_null_session`</span>
+<span class="sd">        in this case.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">save_session</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">,</span> <span class="n">session</span><span class="p">:</span> <span class="n">SessionMixin</span><span class="p">,</span> <span class="n">response</span><span class="p">:</span> <span class="s2">&quot;Response&quot;</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;This is called at the end of each request, after generating</span>
+<span class="sd">        a response, before removing the request context. It is skipped</span>
+<span class="sd">        if :meth:`is_null_session` returns ``True``.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+
+
+<span class="n">session_json_serializer</span> <span class="o">=</span> <span class="n">TaggedJSONSerializer</span><span class="p">()</span>
+
+
+<span class="k">class</span> <span class="nc">SecureCookieSessionInterface</span><span class="p">(</span><span class="n">SessionInterface</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The default session interface that stores sessions in signed cookies</span>
+<span class="sd">    through the :mod:`itsdangerous` module.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1">#: the salt that should be applied on top of the secret key for the</span>
+    <span class="c1">#: signing of cookie based sessions.</span>
+    <span class="n">salt</span> <span class="o">=</span> <span class="s2">&quot;cookie-session&quot;</span>
+    <span class="c1">#: the hash function to use for the signature.  The default is sha1</span>
+    <span class="n">digest_method</span> <span class="o">=</span> <span class="nb">staticmethod</span><span class="p">(</span><span class="n">hashlib</span><span class="o">.</span><span class="n">sha1</span><span class="p">)</span>
+    <span class="c1">#: the name of the itsdangerous supported key derivation.  The default</span>
+    <span class="c1">#: is hmac.</span>
+    <span class="n">key_derivation</span> <span class="o">=</span> <span class="s2">&quot;hmac&quot;</span>
+    <span class="c1">#: A python serializer for the payload.  The default is a compact</span>
+    <span class="c1">#: JSON derived serializer with support for some extra Python types</span>
+    <span class="c1">#: such as datetime objects or tuples.</span>
+    <span class="n">serializer</span> <span class="o">=</span> <span class="n">session_json_serializer</span>
+    <span class="n">session_class</span> <span class="o">=</span> <span class="n">SecureCookieSession</span>
+
+    <span class="k">def</span> <span class="nf">get_signing_serializer</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">URLSafeTimedSerializer</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">app</span><span class="o">.</span><span class="n">secret_key</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">signer_kwargs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+            <span class="n">key_derivation</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">key_derivation</span><span class="p">,</span> <span class="n">digest_method</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">digest_method</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">URLSafeTimedSerializer</span><span class="p">(</span>
+            <span class="n">app</span><span class="o">.</span><span class="n">secret_key</span><span class="p">,</span>
+            <span class="n">salt</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">salt</span><span class="p">,</span>
+            <span class="n">serializer</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">serializer</span><span class="p">,</span>
+            <span class="n">signer_kwargs</span><span class="o">=</span><span class="n">signer_kwargs</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">open_session</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="s2">&quot;Request&quot;</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Optional</span><span class="p">[</span><span class="n">SecureCookieSession</span><span class="p">]:</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_signing_serializer</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">s</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">val</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">cookies</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">get_cookie_name</span><span class="p">(</span><span class="n">app</span><span class="p">))</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">val</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">session_class</span><span class="p">()</span>
+        <span class="n">max_age</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">app</span><span class="o">.</span><span class="n">permanent_session_lifetime</span><span class="o">.</span><span class="n">total_seconds</span><span class="p">())</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">max_age</span><span class="o">=</span><span class="n">max_age</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">session_class</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">BadSignature</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">session_class</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">save_session</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="s2">&quot;Flask&quot;</span><span class="p">,</span> <span class="n">session</span><span class="p">:</span> <span class="n">SessionMixin</span><span class="p">,</span> <span class="n">response</span><span class="p">:</span> <span class="s2">&quot;Response&quot;</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_cookie_name</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+        <span class="n">domain</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_cookie_domain</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_cookie_path</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+        <span class="n">secure</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_cookie_secure</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+        <span class="n">samesite</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_cookie_samesite</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+        <span class="n">httponly</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_cookie_httponly</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+
+        <span class="c1"># If the session is modified to be empty, remove the cookie.</span>
+        <span class="c1"># If the session is empty, return without setting the cookie.</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">session</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">session</span><span class="o">.</span><span class="n">modified</span><span class="p">:</span>
+                <span class="n">response</span><span class="o">.</span><span class="n">delete_cookie</span><span class="p">(</span>
+                    <span class="n">name</span><span class="p">,</span>
+                    <span class="n">domain</span><span class="o">=</span><span class="n">domain</span><span class="p">,</span>
+                    <span class="n">path</span><span class="o">=</span><span class="n">path</span><span class="p">,</span>
+                    <span class="n">secure</span><span class="o">=</span><span class="n">secure</span><span class="p">,</span>
+                    <span class="n">samesite</span><span class="o">=</span><span class="n">samesite</span><span class="p">,</span>
+                    <span class="n">httponly</span><span class="o">=</span><span class="n">httponly</span><span class="p">,</span>
+                <span class="p">)</span>
+
+            <span class="k">return</span>
+
+        <span class="c1"># Add a &quot;Vary: Cookie&quot; header if the session was accessed at all.</span>
+        <span class="k">if</span> <span class="n">session</span><span class="o">.</span><span class="n">accessed</span><span class="p">:</span>
+            <span class="n">response</span><span class="o">.</span><span class="n">vary</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;Cookie&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">should_set_cookie</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">session</span><span class="p">):</span>
+            <span class="k">return</span>
+
+        <span class="n">expires</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_expiration_time</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">session</span><span class="p">)</span>
+        <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_signing_serializer</span><span class="p">(</span><span class="n">app</span><span class="p">)</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="nb">dict</span><span class="p">(</span><span class="n">session</span><span class="p">))</span>  <span class="c1"># type: ignore</span>
+        <span class="n">response</span><span class="o">.</span><span class="n">set_cookie</span><span class="p">(</span>
+            <span class="n">name</span><span class="p">,</span>
+            <span class="n">val</span><span class="p">,</span>  <span class="c1"># type: ignore</span>
+            <span class="n">expires</span><span class="o">=</span><span class="n">expires</span><span class="p">,</span>
+            <span class="n">httponly</span><span class="o">=</span><span class="n">httponly</span><span class="p">,</span>
+            <span class="n">domain</span><span class="o">=</span><span class="n">domain</span><span class="p">,</span>
+            <span class="n">path</span><span class="o">=</span><span class="n">path</span><span class="p">,</span>
+            <span class="n">secure</span><span class="o">=</span><span class="n">secure</span><span class="p">,</span>
+            <span class="n">samesite</span><span class="o">=</span><span class="n">samesite</span><span class="p">,</span>
+        <span class="p">)</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">RaceMaster</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Piotr Jałocha & Mateusz Kotula.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.0.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -24,9 +24,6 @@ class RaceInterface:
         self.next_button = tk.Button(root, text='Następny zawodnik', command=self.next_rider, state='disabled')
         self.next_button.grid(row=0, column=2)
 
-        self.timer_label = tk.Label(root, text='00:00:00.000')
-        self.timer_label.grid(row=0, column=3)
-
         self.table = ttk.Treeview(root, columns=('id', 'imie', 'nazwisko', 'kategoria', 'czas 1', 'czas 2'))
         self.table.grid(row=1, column=0, columnspan=4, pady=(10, 0), padx=(20, 0))
 
@@ -50,12 +47,21 @@ class RaceInterface:
         self.load_categories()
 
     def load_categories(self):
+        """
+        Method that loads categories from database and puts them into combobox.
+        :return:
+        """
         categories = self.cursor.execute('SELECT nazwa FROM Kategoria').fetchall()
         categories = [x[0] for x in categories]
         self.category_select['values'] = categories
         self.category_select.bind('<<ComboboxSelected>>', self.on_category_selected)
 
     def on_category_selected(self, event):
+        """
+        Method that is called when category is selected from combobox.
+        :param event:
+        :return:
+        """
         category = self.category_select.get()
         riders = self.cursor.execute(
             'SELECT Zawodnik.id, imie, nazwisko, Kategoria.nazwa '
@@ -81,12 +87,20 @@ class RaceInterface:
             self.next_button['state'] = 'disabled'
 
     def start_timer(self):
+        """
+        Method that starts timer.
+        :return:
+        """
         self.Camera = Camera(50)
         self.camera_active = True
         self.measure_time()
         self.next_button['state'] = 'normal'
 
     def measure_time(self):
+        """
+        Method that measures time.
+        :return:
+        """
         if self.camera_active:
             elapsed_time = self.Camera.start()
             self.cursor.execute(
@@ -106,6 +120,10 @@ class RaceInterface:
             self.current_rider_label['text'] = 'Nie ma więcej zawodników w tej kategorii.'
 
     def update_current_rider_label(self):
+        """
+        Method that updates current rider label.
+        :return:
+        """
         if self.current_rider_index is not None:
             rider = self.cursor.execute(
                 'SELECT Zawodnik.id, imie, nazwisko, Kategoria.nazwa FROM Zawodnik '

@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>flask.json.provider &#8212; RaceMaster 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css" />
+    <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js"></script>
+    <script src="../../../_static/doctools.js"></script>
+    <script src="../../../_static/sphinx_highlight.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for flask.json.provider</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span> <span class="nn">dataclasses</span>
+<span class="kn">import</span> <span class="nn">decimal</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">typing</span> <span class="k">as</span> <span class="nn">t</span>
+<span class="kn">import</span> <span class="nn">uuid</span>
+<span class="kn">import</span> <span class="nn">weakref</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">date</span>
+
+<span class="kn">from</span> <span class="nn">werkzeug.http</span> <span class="kn">import</span> <span class="n">http_date</span>
+
+<span class="kn">from</span> <span class="nn">..globals</span> <span class="kn">import</span> <span class="n">request</span>
+
+<span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">TYPE_CHECKING</span><span class="p">:</span>  <span class="c1"># pragma: no cover</span>
+    <span class="kn">from</span> <span class="nn">..app</span> <span class="kn">import</span> <span class="n">Flask</span>
+    <span class="kn">from</span> <span class="nn">..wrappers</span> <span class="kn">import</span> <span class="n">Response</span>
+
+
+<span class="k">class</span> <span class="nc">JSONProvider</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A standard set of JSON operations for an application. Subclasses</span>
+<span class="sd">    of this can be used to customize JSON behavior or use different</span>
+<span class="sd">    JSON libraries.</span>
+
+<span class="sd">    To implement a provider for a specific library, subclass this base</span>
+<span class="sd">    class and implement at least :meth:`dumps` and :meth:`loads`. All</span>
+<span class="sd">    other methods have default implementations.</span>
+
+<span class="sd">    To use a different provider, either subclass ``Flask`` and set</span>
+<span class="sd">    :attr:`~flask.Flask.json_provider_class` to a provider class, or set</span>
+<span class="sd">    :attr:`app.json &lt;flask.Flask.json&gt;` to an instance of the class.</span>
+
+<span class="sd">    :param app: An application instance. This will be stored as a</span>
+<span class="sd">        :class:`weakref.proxy` on the :attr:`_app` attribute.</span>
+
+<span class="sd">    .. versionadded:: 2.2</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">app</span><span class="p">:</span> <span class="n">Flask</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_app</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">proxy</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">dumps</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Serialize data as JSON.</span>
+
+<span class="sd">        :param obj: The data to serialize.</span>
+<span class="sd">        :param kwargs: May be passed to the underlying JSON library.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+    <span class="k">def</span> <span class="nf">dump</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="n">fp</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">IO</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Serialize data as JSON and write to a file.</span>
+
+<span class="sd">        :param obj: The data to serialize.</span>
+<span class="sd">        :param fp: A file opened for writing text. Should use the UTF-8</span>
+<span class="sd">            encoding to be valid JSON.</span>
+<span class="sd">        :param kwargs: May be passed to the underlying JSON library.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">fp</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">loads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">s</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">bytes</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Deserialize data as JSON.</span>
+
+<span class="sd">        :param s: Text or UTF-8 bytes.</span>
+<span class="sd">        :param kwargs: May be passed to the underlying JSON library.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+    <span class="k">def</span> <span class="nf">load</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fp</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">IO</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">AnyStr</span><span class="p">],</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Deserialize data as JSON read from a file.</span>
+
+<span class="sd">        :param fp: A file opened for reading text or UTF-8 bytes.</span>
+<span class="sd">        :param kwargs: May be passed to the underlying JSON library.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">fp</span><span class="o">.</span><span class="n">read</span><span class="p">(),</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_prepare_response_obj</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Tuple</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span> <span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">args</span> <span class="ow">and</span> <span class="n">kwargs</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;app.json.response() takes either args or kwargs, not both&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">args</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">kwargs</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="k">return</span> <span class="n">args</span> <span class="ow">or</span> <span class="n">kwargs</span>
+
+    <span class="k">def</span> <span class="nf">response</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Response</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Serialize the given arguments as JSON, and return a</span>
+<span class="sd">        :class:`~flask.Response` object with the ``application/json``</span>
+<span class="sd">        mimetype.</span>
+
+<span class="sd">        The :func:`~flask.json.jsonify` function calls this method for</span>
+<span class="sd">        the current application.</span>
+
+<span class="sd">        Either positional or keyword arguments can be given, not both.</span>
+<span class="sd">        If no arguments are given, ``None`` is serialized.</span>
+
+<span class="sd">        :param args: A single value to serialize, or multiple values to</span>
+<span class="sd">            treat as a list to serialize.</span>
+<span class="sd">        :param kwargs: Treat as a dict to serialize.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">obj</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_response_obj</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">response_class</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">obj</span><span class="p">),</span> <span class="n">mimetype</span><span class="o">=</span><span class="s2">&quot;application/json&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_default</span><span class="p">(</span><span class="n">o</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">o</span><span class="p">,</span> <span class="n">date</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">http_date</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">o</span><span class="p">,</span> <span class="p">(</span><span class="n">decimal</span><span class="o">.</span><span class="n">Decimal</span><span class="p">,</span> <span class="n">uuid</span><span class="o">.</span><span class="n">UUID</span><span class="p">)):</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">dataclasses</span> <span class="ow">and</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">is_dataclass</span><span class="p">(</span><span class="n">o</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">asdict</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">o</span><span class="p">,</span> <span class="s2">&quot;__html__&quot;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">o</span><span class="o">.</span><span class="n">__html__</span><span class="p">())</span>
+
+    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Object of type </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">o</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> is not JSON serializable&quot;</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">DefaultJSONProvider</span><span class="p">(</span><span class="n">JSONProvider</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Provide JSON operations using Python&#39;s built-in :mod:`json`</span>
+<span class="sd">    library. Serializes the following additional data types:</span>
+
+<span class="sd">    -   :class:`datetime.datetime` and :class:`datetime.date` are</span>
+<span class="sd">        serialized to :rfc:`822` strings. This is the same as the HTTP</span>
+<span class="sd">        date format.</span>
+<span class="sd">    -   :class:`uuid.UUID` is serialized to a string.</span>
+<span class="sd">    -   :class:`dataclasses.dataclass` is passed to</span>
+<span class="sd">        :func:`dataclasses.asdict`.</span>
+<span class="sd">    -   :class:`~markupsafe.Markup` (or any object with a ``__html__``</span>
+<span class="sd">        method) will call the ``__html__`` method to get a string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">default</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Callable</span><span class="p">[[</span><span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">],</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="nb">staticmethod</span><span class="p">(</span>
+        <span class="n">_default</span>
+    <span class="p">)</span>  <span class="c1"># type: ignore[assignment]</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply this function to any object that :meth:`json.dumps` does</span>
+<span class="sd">    not know how to serialize. It should return a valid JSON type or</span>
+<span class="sd">    raise a ``TypeError``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">ensure_ascii</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace non-ASCII characters with escape sequences. This may be</span>
+<span class="sd">    more compatible with some clients, but can be disabled for better</span>
+<span class="sd">    performance and size.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">sort_keys</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Sort the keys in any serialized dicts. This may be useful for</span>
+<span class="sd">    some caching situations, but can be disabled for better performance.</span>
+<span class="sd">    When enabled, keys must all be strings, they are not converted</span>
+<span class="sd">    before sorting.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">compact</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;If ``True``, or ``None`` out of debug mode, the :meth:`response`</span>
+<span class="sd">    output will not add indentation, newlines, or spaces. If ``False``,</span>
+<span class="sd">    or ``None`` in debug mode, it will use a non-compact representation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">mimetype</span> <span class="o">=</span> <span class="s2">&quot;application/json&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The mimetype set in :meth:`response`.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">dumps</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Serialize data as JSON to a string.</span>
+
+<span class="sd">        Keyword arguments are passed to :func:`json.dumps`. Sets some</span>
+<span class="sd">        parameter defaults from the :attr:`default`,</span>
+<span class="sd">        :attr:`ensure_ascii`, and :attr:`sort_keys` attributes.</span>
+
+<span class="sd">        :param obj: The data to serialize.</span>
+<span class="sd">        :param kwargs: Passed to :func:`json.dumps`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">cls</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">_json_encoder</span>
+        <span class="n">bp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">blueprints</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">blueprint</span><span class="p">)</span> <span class="k">if</span> <span class="n">request</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">bp</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">bp</span><span class="o">.</span><span class="n">_json_encoder</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">cls</span> <span class="o">=</span> <span class="n">bp</span><span class="o">.</span><span class="n">_json_encoder</span>
+
+        <span class="k">if</span> <span class="bp">cls</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">import</span> <span class="nn">warnings</span>
+
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="s2">&quot;Setting &#39;json_encoder&#39; on the app or a blueprint is&quot;</span>
+                <span class="s2">&quot; deprecated and will be removed in Flask 2.3.&quot;</span>
+                <span class="s2">&quot; Customize &#39;app.json&#39; instead.&quot;</span><span class="p">,</span>
+                <span class="ne">DeprecationWarning</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;cls&quot;</span><span class="p">,</span> <span class="bp">cls</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="s2">&quot;default&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">cls</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">:</span>
+                <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;default&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">default</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;default&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">default</span><span class="p">)</span>
+
+        <span class="n">ensure_ascii</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;JSON_AS_ASCII&quot;</span><span class="p">]</span>
+        <span class="n">sort_keys</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;JSON_SORT_KEYS&quot;</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="n">ensure_ascii</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">import</span> <span class="nn">warnings</span>
+
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="s2">&quot;The &#39;JSON_AS_ASCII&#39; config key is deprecated and will&quot;</span>
+                <span class="s2">&quot; be removed in Flask 2.3. Set &#39;app.json.ensure_ascii&#39;&quot;</span>
+                <span class="s2">&quot; instead.&quot;</span><span class="p">,</span>
+                <span class="ne">DeprecationWarning</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">ensure_ascii</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ensure_ascii</span>
+
+        <span class="k">if</span> <span class="n">sort_keys</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">import</span> <span class="nn">warnings</span>
+
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="s2">&quot;The &#39;JSON_SORT_KEYS&#39; config key is deprecated and will&quot;</span>
+                <span class="s2">&quot; be removed in Flask 2.3. Set &#39;app.json.sort_keys&#39;&quot;</span>
+                <span class="s2">&quot; instead.&quot;</span><span class="p">,</span>
+                <span class="ne">DeprecationWarning</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">sort_keys</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sort_keys</span>
+
+        <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;ensure_ascii&quot;</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="p">)</span>
+        <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;sort_keys&quot;</span><span class="p">,</span> <span class="n">sort_keys</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">loads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">s</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">bytes</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Deserialize data as JSON from a string or bytes.</span>
+
+<span class="sd">        :param s: Text or UTF-8 bytes.</span>
+<span class="sd">        :param kwargs: Passed to :func:`json.loads`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">cls</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">_json_decoder</span>
+        <span class="n">bp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">blueprints</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">blueprint</span><span class="p">)</span> <span class="k">if</span> <span class="n">request</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">bp</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">bp</span><span class="o">.</span><span class="n">_json_decoder</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">cls</span> <span class="o">=</span> <span class="n">bp</span><span class="o">.</span><span class="n">_json_decoder</span>
+
+        <span class="k">if</span> <span class="bp">cls</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">import</span> <span class="nn">warnings</span>
+
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="s2">&quot;Setting &#39;json_decoder&#39; on the app or a blueprint is&quot;</span>
+                <span class="s2">&quot; deprecated and will be removed in Flask 2.3.&quot;</span>
+                <span class="s2">&quot; Customize &#39;app.json&#39; instead.&quot;</span><span class="p">,</span>
+                <span class="ne">DeprecationWarning</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;cls&quot;</span><span class="p">,</span> <span class="bp">cls</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">response</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Response</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Serialize the given arguments as JSON, and return a</span>
+<span class="sd">        :class:`~flask.Response` object with it. The response mimetype</span>
+<span class="sd">        will be &quot;application/json&quot; and can be changed with</span>
+<span class="sd">        :attr:`mimetype`.</span>
+
+<span class="sd">        If :attr:`compact` is ``False`` or debug mode is enabled, the</span>
+<span class="sd">        output will be formatted to be easier to read.</span>
+
+<span class="sd">        Either positional or keyword arguments can be given, not both.</span>
+<span class="sd">        If no arguments are given, ``None`` is serialized.</span>
+
+<span class="sd">        :param args: A single value to serialize, or multiple values to</span>
+<span class="sd">            treat as a list to serialize.</span>
+<span class="sd">        :param kwargs: Treat as a dict to serialize.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">obj</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_response_obj</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">)</span>
+        <span class="n">dump_args</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">pretty</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;JSONIFY_PRETTYPRINT_REGULAR&quot;</span><span class="p">]</span>
+        <span class="n">mimetype</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;JSONIFY_MIMETYPE&quot;</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="n">pretty</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">import</span> <span class="nn">warnings</span>
+
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="s2">&quot;The &#39;JSONIFY_PRETTYPRINT_REGULAR&#39; config key is&quot;</span>
+                <span class="s2">&quot; deprecated and will be removed in Flask 2.3. Set&quot;</span>
+                <span class="s2">&quot; &#39;app.json.compact&#39; instead.&quot;</span><span class="p">,</span>
+                <span class="ne">DeprecationWarning</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">compact</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">pretty</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">compact</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compact</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="n">compact</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">debug</span><span class="p">)</span> <span class="ow">or</span> <span class="n">compact</span> <span class="ow">is</span> <span class="kc">False</span><span class="p">:</span>
+            <span class="n">dump_args</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;indent&quot;</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">dump_args</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;separators&quot;</span><span class="p">,</span> <span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">,</span> <span class="s2">&quot;:&quot;</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">mimetype</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">import</span> <span class="nn">warnings</span>
+
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="s2">&quot;The &#39;JSONIFY_MIMETYPE&#39; config key is deprecated and&quot;</span>
+                <span class="s2">&quot; will be removed in Flask 2.3. Set &#39;app.json.mimetype&#39;&quot;</span>
+                <span class="s2">&quot; instead.&quot;</span><span class="p">,</span>
+                <span class="ne">DeprecationWarning</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">mimetype</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mimetype</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_app</span><span class="o">.</span><span class="n">response_class</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span><span class="w"> </span><span class="o">**</span><span class="n">dump_args</span><span class="p">)</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">mimetype</span><span class="o">=</span><span class="n">mimetype</span>
+        <span class="p">)</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">RaceMaster</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Piotr Jałocha & Mateusz Kotula.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.0.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>
