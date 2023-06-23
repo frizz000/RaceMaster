@@ -2,27 +2,32 @@
 <html lang="en">
 <head>
     <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/styleRegister.css') }}">
+    <script src="{{ url_for('static', filename='js/scriptIs18.js') }}"></script>
     <title>Rejestracja zawodnika</title>
 </head>
 <body>
     <form action="/" method="post">
         <label for="imie">Imię:</label><br>
-        <input type="text" id="imie" name="imie"><br>
+        <input type="text" id="imie" name="imie" required><br>
         <label for="nazwisko">Nazwisko:</label><br>
-        <input type="text" id="nazwisko" name="nazwisko"><br>
+        <input type="text" id="nazwisko" name="nazwisko" required><br>
         <label for="dataUrodzenia">Data urodzenia:</label><br>
-        <input type="date" id="dataUrodzenia" name="dataUrodzenia"><br>
+        <input type="date" id="dataUrodzenia" name="dataUrodzenia" required><br>
         <label for="nrTelefonu">Numer telefonu:</label><br>
-        <input type="text" id="nrTelefonu" name="nrTelefonu"><br>
-        <label for="daneOpiekuna">Dane opiekuna:</label><br>
-        <input type="text" id="daneOpiekuna" name="daneOpiekuna"><br>
+        <input type="text" id="nrTelefonu" name="nrTelefonu" required><br>
+
+        <div id="daneOpiekunaContainer">
+            <label for="daneOpiekuna">Dane opiekuna:</label><br>
+            <input type="text" id="daneOpiekuna" name="daneOpiekuna"><br>
+        </div>
+
         <label for="pojazd">Pojazd:</label><br>
-        <select id="pojazd" name="pojazd">
+        <select id="pojazd" name="pojazd" required>
             <option value="rower">Rower</option>
             <option value="hulajnoga">Hulajnoga</option>
         </select><br>
         <label for="Kategoria">Kategoria:</label><br>
-        <select id="Kategoria" name="Kategoria">
+        <select id="Kategoria" name="Kategoria" required>
             {% for kategoria in kategorie %}
             <option value="{{ kategoria }}">{{ kategoria }}</option>
             {% endfor %}
